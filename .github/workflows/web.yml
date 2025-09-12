@@ -1,0 +1,19 @@
+name: Deploy Flutter Web to GitHub Pages
+on:
+  push:
+    branches: ["main"]     # mainにpushしたら実行
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+      - run: flutter pub get
+      # リポジトリ名が roulette なので base-href を /roulette/ にする
+      - run: flutter build web --release --web-renderer canvaskit --base-href "/roulette/"
+      - uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: build/web
