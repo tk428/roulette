@@ -1,4 +1,4 @@
-name: web
+name: Flutter Web Deploy
 
 on:
   push:
@@ -13,28 +13,32 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # リポジトリをチェックアウト
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # Flutter を安定版でセットアップ（ここが肝）
+      # Flutter を安定版の特定バージョンでセットアップ
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          flutter-version: 'stable'   # 固定したいなら 3.22.2 など具体値でもOK
+          flutter-version: '3.22.2'   # ← 2025年現在の安定版（変えてOK）
 
+      # Web サポートを有効化
       - name: Enable web
         run: flutter config --enable-web
 
+      # 依存関係を取得
       - name: Get dependencies
         run: flutter pub get
 
-      # web-renderer でコケていたので一旦省略（必要ならコメントの行に差し替え）
+      # Web をリリースビルド
       - name: Build web
         run: flutter build web --release --base-href "/roulette/"
-        # もし renderer を指定したいときは下を使う（Flutter が十分新しければOK）
+        # renderer を指定したいなら ↓ を使う（Flutter が新しければOK）
         # run: flutter build web --release --web-renderer html --base-href "/roulette/"
 
-      # gh-pages ブランチへ出力をデプロイ
+      # GitHub Pages にデプロイ
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
