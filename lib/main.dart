@@ -1040,42 +1040,46 @@ class _WheelPainter extends CustomPainter {
   bool shouldRepaint(covariant _WheelPainter old) => old.items != items || old.total != total || old.angle != angle;
 }
 
-// ===== PATCH: pointer painter — point to wheel center (downward triangle) =====
+// ===== PATCH: pointer painter — tip points DOWN toward the wheel =====
 class _PointerPainterGlow extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width, h = size.height;
-    final paint = Paint()
+
+    // 影(グロー)
+    final glow = Paint()
+      ..color = Colors.redAccent.withOpacity(0.28)
+      ..style = PaintingStyle.fill
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+
+    // 本体
+    final fill = Paint()
       ..color = Colors.redAccent
       ..style = PaintingStyle.fill;
 
-    // ほんのりグロー
-    final glow = Paint()
-      ..color = Colors.redAccent.withOpacity(0.28)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
-
-    // 上端に載せるので「下向き（中心側）」の正三角形
-    final path = Path()
-      ..moveTo(w * 0.5, h * 0.00)   // 上頂点
-      ..lineTo(w * 0.85, h * 0.60)  // 右下
-      ..lineTo(w * 0.15, h * 0.60)  // 左下
-      ..close();
-
-    // グロー → 本体
-    canvas.drawPath(path, glow);
-    canvas.drawPath(path, paint);
-
-    // 白縁
+    // 縁取り
     final stroke = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
+
+    // ▼ 下向き三角形（アラインは Align.topCenter、キャンバス下側が円盤側）
+    // apex（先端）を下に、台側を上に配置
+    final path = Path()
+      ..moveTo(w * 0.50, h * 0.95)  // 先端（下）
+      ..lineTo(w * 0.18, h * 0.20)  // 左上
+      ..lineTo(w * 0.82, h * 0.20)  // 右上
+      ..close();
+
+    canvas.drawPath(path, glow);
+    canvas.drawPath(path, fill);
     canvas.drawPath(path, stroke);
   }
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
+
 
 
 class _HubPainter extends CustomPainter {
