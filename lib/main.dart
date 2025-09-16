@@ -503,7 +503,7 @@ class _DefinePageState extends State<DefinePage> {
     return Scaffold(
       appBar: AppBar(
           title:
-          Text(widget.initial == null ? "新規ルーレット定義" : "ルーレット編集")),
+          Text(widget.initial == null ? "新規ルーレット作成" : "ルーレット編集")),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -523,61 +523,68 @@ class _DefinePageState extends State<DefinePage> {
                         style: TextStyle(
                             fontWeight: FontWeight.w700, fontSize: 14)),
                     const SizedBox(height: 8),
-                    Row(
+                    // ← ここから置換（Row → Column 縦積み）
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        // 項目名（できるだけ広く）
-                        Expanded(
-                          flex: 2,
-                          child: TextField(
-                            focusNode: _newNameFocus,
-                            controller: _newNameCtl,
-                            maxLength: 100,
-                            decoration: const InputDecoration(
-                              labelText: "項目名（100文字まで）",
-                              counterText: "",
+                        // 項目名：フル幅
+                        TextField(
+                          focusNode: _newNameFocus,
+                          controller: _newNameCtl,
+                          maxLength: 100,
+                          decoration: const InputDecoration(
+                            labelText: "項目名（100文字まで）",
+                            counterText: "",
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+
+                        // 比率 + %：横並び（必要に応じて縮む）
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _newWeightCtl,
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                decoration: const InputDecoration(
+                                  labelText: "比率", // ← （1-100）の括弧はやめて短く
+                                  isDense: true,
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        // 比率 + %（必要に応じて縮む）
-                        Flexible(
-                          flex: 1,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: TextField(
-                                  controller: _newWeightCtl,
-                                  keyboardType: TextInputType.number,
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.digitsOnly
-                                  ],
-                                  decoration: const InputDecoration(
-                                    labelText: "比率 (1-100)",
-                                    isDense: true,
-                                  ),
-                                ),
+                            const SizedBox(width: 8),
+                            ValueListenableBuilder<String>(
+                              valueListenable: _newPercent,
+                              builder: (_, v, __) => Text(
+                                v, // 例: "23.1%"
+                                style: const TextStyle(fontWeight: FontWeight.w700),
                               ),
-                              const SizedBox(width: 6),
-                              ValueListenableBuilder<String>(
-                                valueListenable: _newPercent,
-                                builder: (_, v, __) => Text(
-                                  v,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w700),
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 6),
-                        FilledButton.icon(
-                          onPressed: _add,
-                          icon: const Icon(Icons.add),
-                          label: const Text("追加"),
+
+                        // 追記：少し補足（任意なら消してOK）
+                        const SizedBox(height: 4),
+                        const Text(
+                          "※ 比率は1〜100、%は現在の合計に対する目安です。",
+                          style: TextStyle(fontSize: 12, color: Colors.black54),
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        // 追加ボタン：下にフル幅で
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _add,
+                            icon: const Icon(Icons.add),
+                            label: const Text("追加"),
+                          ),
                         ),
                       ],
                     ),
+
                     const SizedBox(height: 4),
                     const Text("※ このカードは“入力中”。下の一覧は“追加済み”。",
                         style:
@@ -1033,25 +1040,43 @@ class _WheelPainter extends CustomPainter {
   bool shouldRepaint(covariant _WheelPainter old) => old.items != items || old.total != total || old.angle != angle;
 }
 
+// ===== PATCH: pointer painter — point to wheel center (downward triangle) =====
 class _PointerPainterGlow extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final paint = Paint()
+      ..color = Colors.redAccent
+      ..style = PaintingStyle.fill;
+
+    // ほんのりグロー
+    final glow = Paint()
+      ..color = Colors.redAccent.withOpacity(0.28)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+
+    // 上端に載せるので「下向き（中心側）」の正三角形
     final path = Path()
-      ..moveTo(size.width / 2, 0)
-      ..lineTo(0, size.height)
-      ..lineTo(size.width, size.height)
+      ..moveTo(w * 0.5, h * 0.00)   // 上頂点
+      ..lineTo(w * 0.85, h * 0.60)  // 右下
+      ..lineTo(w * 0.15, h * 0.60)  // 左下
       ..close();
 
-    canvas.drawPath(path, Paint()
-      ..color = Colors.orangeAccent.withOpacity(0.5)
-      ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 8));
-    canvas.drawPath(path, Paint()..color = Colors.orange.shade700);
-    canvas.drawPath(path, Paint()
-      ..style = PaintingStyle.stroke..strokeWidth = 1.5..color = Colors.white.withOpacity(0.9));
+    // グロー → 本体
+    canvas.drawPath(path, glow);
+    canvas.drawPath(path, paint);
+
+    // 白縁
+    final stroke = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawPath(path, stroke);
   }
+
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
+
 
 class _HubPainter extends CustomPainter {
   @override
