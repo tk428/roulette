@@ -1,3 +1,5 @@
+// ===== BLOCK 1: imports & main =====
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui' as ui;
@@ -19,12 +21,11 @@ class RouletteApp extends StatelessWidget {
   }
 }
 
-/* ===================== モデル & 永続化 ===================== */
-
+// ===== BLOCK 2: models & storage =====
 class RouletteItem {
   final String name;
-  final int weight; // 1-100
-  final int color;  // Color.value
+  final int weight;
+  final int color;
   RouletteItem({required this.name, required this.weight, required this.color});
   Map<String, dynamic> toJson() => {"name": name, "weight": weight, "color": color};
   static RouletteItem fromJson(Map<String, dynamic> j) =>
@@ -49,54 +50,49 @@ class RouletteDef {
     this.isPinned = false,
   });
   Map<String, dynamic> toJson() => {
-        "id": id,
-        "title": title,
-        "items": items.map((e) => e.toJson()).toList(),
-        "createdAt": createdAt,
-        "updatedAt": updatedAt,
-        "lastUsedAt": lastUsedAt,
-        "isPinned": isPinned,
-      };
+    "id": id,
+    "title": title,
+    "items": items.map((e) => e.toJson()).toList(),
+    "createdAt": createdAt,
+    "updatedAt": updatedAt,
+    "lastUsedAt": lastUsedAt,
+    "isPinned": isPinned,
+  };
   static RouletteDef fromJson(Map<String, dynamic> j) => RouletteDef(
-        id: j["id"],
-        title: j["title"],
-        items: (j["items"] as List).map((e) => RouletteItem.fromJson(Map<String, dynamic>.from(e))).toList(),
-        createdAt: j["createdAt"],
-        updatedAt: j["updatedAt"],
-        lastUsedAt: j["lastUsedAt"],
-        isPinned: j["isPinned"] ?? false,
-      );
+    id: j["id"],
+    title: j["title"],
+    items: (j["items"] as List).map((e) => RouletteItem.fromJson(Map<String, dynamic>.from(e))).toList(),
+    createdAt: j["createdAt"],
+    updatedAt: j["updatedAt"],
+    lastUsedAt: j["lastUsedAt"],
+    isPinned: j["isPinned"] ?? false,
+  );
 }
 
 class Store {
   static const _kLast = "last_roulette";
   static const _kSaved = "saved_roulettes";
-
   static Future<Map<String, dynamic>?> loadLast() async {
     final p = await SharedPreferences.getInstance();
     final s = p.getString(_kLast);
     return s == null ? null : jsonDecode(s);
   }
-
   static Future<void> saveLast(RouletteDef def) async {
     final p = await SharedPreferences.getInstance();
     await p.setString(_kLast, jsonEncode(def.toJson()));
   }
-
   static Future<List<RouletteDef>> loadSaved() async {
     final p = await SharedPreferences.getInstance();
     final list = p.getStringList(_kSaved) ?? [];
     return list.map((s) => RouletteDef.fromJson(jsonDecode(s))).toList();
   }
-
   static Future<void> saveSaved(List<RouletteDef> defs) async {
     final p = await SharedPreferences.getInstance();
     await p.setStringList(_kSaved, defs.map((d) => jsonEncode(d.toJson())).toList());
   }
 }
 
-/* ===================== ルート画面 ===================== */
-
+// ===== BLOCK 3: root page (home) — simple, fixed create button, floating snackbars =====
 class RootPage extends StatefulWidget {
   const RootPage({super.key});
   @override
@@ -106,6 +102,13 @@ class RootPage extends StatefulWidget {
 class _RootPageState extends State<RootPage> {
   RouletteDef? last;
   List<RouletteDef> saved = [];
+
+  // スナックバー（下固定ボタンに被らないよう浮かせる）
+  SnackBar _okBar(String msg) => SnackBar(
+    content: Text(msg),
+    behavior: SnackBarBehavior.floating,
+    margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+  );
 
   @override
   void initState() {
@@ -130,6 +133,9 @@ class _RootPageState extends State<RootPage> {
     list.removeWhere((e) => e.id == id);
     await Store.saveSaved(list);
     _loadAll();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(_okBar("削除しました"));
+    }
   }
 
   void _togglePin(String id, bool pin) async {
@@ -151,9 +157,21 @@ class _RootPageState extends State<RootPage> {
     }
   }
 
+  Future<void> _goDefine({RouletteDef? initial}) async {
+    // 戻り値は使わない（＝一覧で削除する押下時も単に戻るだけ）
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => DefinePage(initial: initial)),
+    );
+    if (!mounted) return;
+    await _loadAll();
+  }
+
   Widget _savedTile(RouletteDef d) {
-    final preview = d.items.take(3).map((e) => e.name).join(", ") + (d.items.length > 3 ? "…" : "");
+    final preview =
+        d.items.take(3).map((e) => e.name).join(", ") + (d.items.length > 3 ? "…" : "");
     final pinned = d.isPinned;
+
     return Card(
       child: ListTile(
         leading: Icon(pinned ? Icons.push_pin : Icons.circle_outlined),
@@ -162,7 +180,7 @@ class _RootPageState extends State<RootPage> {
         trailing: PopupMenuButton<String>(
           onSelected: (v) {
             if (v == "pin") _togglePin(d.id, !pinned);
-            if (v == "edit") Navigator.push(context, MaterialPageRoute(builder: (_) => DefinePage(initial: d))).then((_) => _loadAll());
+            if (v == "edit") _goDefine(initial: d);
             if (v == "del") _deleteSaved(d.id);
           },
           itemBuilder: (_) => [
@@ -171,7 +189,10 @@ class _RootPageState extends State<RootPage> {
             const PopupMenuItem(value: "del", child: Text("削除")),
           ],
         ),
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SpinPage(def: d))).then((_) => _loadAll()),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => SpinPage(def: d)),
+        ).then((_) => _loadAll()),
       ),
     );
   }
@@ -200,12 +221,15 @@ class _RootPageState extends State<RootPage> {
                     Row(
                       children: [
                         FilledButton(
-                          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SpinPage(def: last!))).then((_) => _loadAll()),
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => SpinPage(def: last!)),
+                          ).then((_) => _loadAll()),
                           child: const Text("▶ 回す"),
                         ),
                         const SizedBox(width: 12),
                         OutlinedButton(
-                          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DefinePage(initial: last!))).then((_) => _loadAll()),
+                          onPressed: () => _goDefine(initial: last),
                           child: const Text("✎ 編集する"),
                         ),
                       ],
@@ -218,23 +242,39 @@ class _RootPageState extends State<RootPage> {
             const Text("（前回のルーレットはまだありません）"),
           const SizedBox(height: 24),
           const Text("保存したルーレット", style: TextStyle(fontWeight: FontWeight.bold)),
-          if (pinned.isNotEmpty) const Padding(padding: EdgeInsets.only(top: 8), child: Text("📌 ピン留め")),
+          if (pinned.isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text("📌 ピン留め"),
+            ),
           ...pinned.map(_savedTile),
-          if (others.isNotEmpty) const Padding(padding: EdgeInsets.only(top: 8), child: Text("最近使った順")),
+          if (others.isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text("最近使った順"),
+            ),
           ...others.map(_savedTile),
-          const SizedBox(height: 24),
-          FilledButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DefinePage())).then((_) => _loadAll()),
-            child: const Text("＋ 新規ルーレットを作成"),
-          ),
+          const SizedBox(height: 100), // 最下部の安全マージン
         ],
+      ),
+      // 画面下に常設の「新規作成」だけ残す
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: FilledButton.icon(
+            icon: const Icon(Icons.add),
+            onPressed: () => _goDefine(),
+            label: const Text("新規ルーレットを作成"),
+          ),
+        ),
       ),
     );
   }
 }
 
-/* ===================== 定義画面（比率デフォ=1） ===================== */
 
+
+// ===== BLOCK 4: define page — responsive inputs, default numbering, save limit dialog =====
 class DefinePage extends StatefulWidget {
   final RouletteDef? initial;
   const DefinePage({super.key, this.initial});
@@ -243,48 +283,127 @@ class DefinePage extends StatefulWidget {
 }
 
 class _DefinePageState extends State<DefinePage> {
-  final itemController = TextEditingController();
-  final weightController = TextEditingController(text: "1");
+  // 追加用（常に表示・追加後も残す）
+  final _newNameCtl = TextEditingController();
+  final _newWeightCtl = TextEditingController(text: "1");
+  final _newPercent = ValueNotifier<String>("--%");
+  final _newNameFocus = FocusNode();
+
+  // 行ごとコントローラ（常時編集）
+  final List<TextEditingController> _nameCtls = [];
+  final List<TextEditingController> _weightCtls = [];
 
   List<RouletteItem> items = [];
 
   @override
   void initState() {
     super.initState();
-    if (widget.initial != null) {
-      items = List<RouletteItem>.from(widget.initial!.items);
+    if (widget.initial != null) items = List<RouletteItem>.from(widget.initial!.items);
+    _rebuildControllers();
+    _newWeightCtl.addListener(_updateNewPercent);
+    _updateNewPercent();
+  }
+
+  @override
+  void dispose() {
+    _newNameCtl.dispose();
+    _newWeightCtl.dispose();
+    _newPercent.dispose();
+    _newNameFocus.dispose();
+    for (final c in _nameCtls) c.dispose();
+    for (final c in _weightCtls) c.dispose();
+    super.dispose();
+  }
+
+  int get totalWeight => items.fold<int>(0, (s, e) => s + e.weight);
+
+  void _rebuildControllers() {
+    for (final c in _nameCtls) c.dispose();
+    for (final c in _weightCtls) c.dispose();
+    _nameCtls
+      ..clear()
+      ..addAll(items.map((e) => TextEditingController(text: e.name)));
+    _weightCtls
+      ..clear()
+      ..addAll(items.map((e) => TextEditingController(text: e.weight.toString())));
+    for (int i = 0; i < _weightCtls.length; i++) {
+      _weightCtls[i].addListener(() => _applyEdit(i));
     }
+    for (int i = 0; i < _nameCtls.length; i++) {
+      _nameCtls[i].addListener(() => _applyEdit(i));
+    }
+    setState(() {});
+  }
+
+  void _applyEdit(int index) {
+    if (index < 0 || index >= items.length) return;
+    final name = _nameCtls[index].text;
+    var w = int.tryParse(_weightCtls[index].text) ?? items[index].weight;
+    w = w.clamp(1, 100);
+    items[index] = RouletteItem(name: name, weight: w, color: items[index].color);
+    setState(() {}); // % 再計算用
+  }
+
+  void _updateNewPercent() {
+    final w = int.tryParse(_newWeightCtl.text) ?? 1;
+    final tot = totalWeight + max(1, w);
+    final p = tot == 0 ? "--" : (w / tot * 100).toStringAsFixed(1);
+    _newPercent.value = "$p%";
   }
 
   void _add() {
-    final name = itemController.text.trim();
-    if (name.isEmpty) return;
-    if (items.length >= 100) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("最大100件までです")));
+    final name = _newNameCtl.text.trim();
+    if (name.isEmpty) {
+      _newNameFocus.requestFocus();
       return;
     }
-    int w = int.tryParse(weightController.text) ?? 1;
-    if (w < 1) w = 1;
-    if (w > 100) w = 100;
+    if (items.length >= 100) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("最大100件までです")));
+      return;
+    }
+    var w = int.tryParse(_newWeightCtl.text) ?? 1;
+    w = w.clamp(1, 100);
     setState(() {
-      final color = Colors.primaries[items.length % Colors.primaries.length].shade400.value;
+      final color = Colors.primaries[items.length % Colors.primaries.length]
+          .shade400
+          .value;
       items.add(RouletteItem(name: name, weight: w, color: color));
-      itemController.clear();
-      weightController.text = "1";
+      _newNameCtl.clear();
+      _newWeightCtl.text = "1";
+      _updateNewPercent();
+      _rebuildControllers();
+      _newNameFocus.requestFocus();
     });
+  }
+
+  // 欠番の最小Nで「ルーレットN」を返す
+  String _nextDefaultTitle(List<RouletteDef> saved) {
+    final used = <int>{};
+    final re = RegExp(r'^ルーレット(\d+)$');
+    for (final d in saved) {
+      final m = re.firstMatch(d.title);
+      if (m != null) {
+        final n = int.tryParse(m.group(1) ?? '');
+        if (n != null) used.add(n);
+      }
+    }
+    int n = 1;
+    while (used.contains(n)) n++;
+    return "ルーレット$n";
   }
 
   Future<void> _saveDialog() async {
     if (items.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("候補は2件以上必要です")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("候補は2件以上必要です")),
+      );
       return;
     }
     final saved = await Store.loadSaved();
-    String base = "ルーレット";
-    int num = 1;
-    String candidate() => "$base$num";
-    while (saved.any((e) => e.title == candidate())) num++;
-    final titleCtl = TextEditingController(text: candidate());
+    final defaultTitle = _nextDefaultTitle(saved);
+
+    final titleCtl = TextEditingController(text: defaultTitle);
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -292,22 +411,63 @@ class _DefinePageState extends State<DefinePage> {
         content: TextField(
           controller: titleCtl,
           maxLength: 100,
-          decoration: const InputDecoration(labelText: "タイトル（100文字まで）"),
+          decoration:
+          const InputDecoration(labelText: "タイトル（100文字まで）"),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("キャンセル")),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text("保存")),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text("キャンセル")),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text("保存")),
         ],
       ),
     );
     if (ok != true) return;
 
-    var title = titleCtl.text.trim().isEmpty ? candidate() : titleCtl.text.trim();
+    var title = titleCtl.text.trim().isEmpty
+        ? defaultTitle
+        : titleCtl.text.trim();
+
+    // タイトル重複は末尾に数字を足して回避
     if (saved.any((e) => e.title == title)) {
       int n = 2;
       while (saved.any((e) => e.title == "$title$n")) n++;
       title = "$title$n";
     }
+
+    // 上限チェック（サイレント削除しない）
+    const maxSaves = 100;
+    if (saved.length >= maxSaves) {
+      if (context.mounted) {
+        final goList = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("保存数の上限"),
+            content: const Text("ルーレット保存数が上限に達しています。\n不要なルーレットを削除してください。"),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("閉じる"),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("一覧で削除する"),
+              ),
+            ],
+          ),
+        );
+
+        if (goList == true) {
+          // ★ どこから来ていても RootPage（最初のRoute＝一覧）まで戻る
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
+      }
+      return; // 保存処理はしない
+    }
+
+
 
     final now = DateTime.now().toIso8601String();
     final def = RouletteDef(
@@ -319,78 +479,229 @@ class _DefinePageState extends State<DefinePage> {
       lastUsedAt: null,
       isPinned: false,
     );
+
     saved.insert(0, def);
-    if (saved.length > 10) saved.removeLast();
     await Store.saveSaved(saved);
     await Store.saveLast(def);
 
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("保存しました")));
-      Navigator.pop(context);
-    }
+    if (!mounted) return;
+    // RootPage側の下固定ボタンに被らないスナックバー（RootPageでも定義してるが、ここでも安全に浮かせる）
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text("保存しました"),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+      ),
+    );
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    final total = items.fold<int>(0, (s, e) => s + e.weight);
+    final sum = totalWeight;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.initial == null ? "新規ルーレット定義" : "ルーレット編集")),
+      appBar: AppBar(
+          title:
+          Text(widget.initial == null ? "新規ルーレット定義" : "ルーレット編集")),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: itemController,
-                  maxLength: 100,
-                  decoration: const InputDecoration(labelText: "項目名（100文字まで）"),
+            // 新規入力エリア：項目名を広め・比率は柔軟に縮む
+            Card(
+              elevation: 1.5,
+              margin: const EdgeInsets.only(bottom: 12),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("新規項目を追加",
+                        style: TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 14)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        // 項目名（できるだけ広く）
+                        Expanded(
+                          flex: 2,
+                          child: TextField(
+                            focusNode: _newNameFocus,
+                            controller: _newNameCtl,
+                            maxLength: 100,
+                            decoration: const InputDecoration(
+                              labelText: "項目名（100文字まで）",
+                              counterText: "",
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // 比率 + %（必要に応じて縮む）
+                        Flexible(
+                          flex: 1,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: TextField(
+                                  controller: _newWeightCtl,
+                                  keyboardType: TextInputType.number,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly
+                                  ],
+                                  decoration: const InputDecoration(
+                                    labelText: "比率 (1-100)",
+                                    isDense: true,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              ValueListenableBuilder<String>(
+                                valueListenable: _newPercent,
+                                builder: (_, v, __) => Text(
+                                  v,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        FilledButton.icon(
+                          onPressed: _add,
+                          icon: const Icon(Icons.add),
+                          label: const Text("追加"),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    const Text("※ このカードは“入力中”。下の一覧は“追加済み”。",
+                        style:
+                        TextStyle(fontSize: 12, color: Colors.black54)),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 90,
-                child: TextField(
-                  controller: weightController,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(labelText: "比率(1-100)"),
-                ),
-              ),
-              IconButton(onPressed: _add, icon: const Icon(Icons.add)),
-            ]),
-            const SizedBox(height: 8),
+            ),
+
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text("追加済みの項目",
+                  style: TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 13)),
+            ),
+            const SizedBox(height: 6),
+
+            // 追加済みリスト（白背景のまま・レスポンシブ）
             Expanded(
-              child: ListView.builder(
+              child: ListView.separated(
                 itemCount: items.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (_, i) {
                   final e = items[i];
-                  final p = total == 0 ? "--" : (e.weight / total * 100).toStringAsFixed(1);
-                  return ListTile(
-                    leading: CircleAvatar(backgroundColor: Color(e.color)),
-                    title: Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    trailing: Text(total == 0 ? "--%" : "$p%"),
-                    onLongPress: () => setState(() => items.removeAt(i)),
+                  final p = sum == 0
+                      ? "--"
+                      : (e.weight / sum * 100).toStringAsFixed(1);
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 6, horizontal: 2),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: CircleAvatar(
+                              backgroundColor: Color(e.color), radius: 9),
+                        ),
+                        // 項目名（広く取る）
+                        Expanded(
+                          flex: 2,
+                          child: TextField(
+                            controller: _nameCtls[i],
+                            maxLength: 100,
+                            decoration: const InputDecoration(
+                              labelText: "項目名",
+                              counterText: "",
+                              isDense: true,
+                            ),
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        // 比率（最小幅を確保しつつ縮む）
+                        Flexible(
+                          flex: 1,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: TextField(
+                                  controller: _weightCtls[i],
+                                  keyboardType: TextInputType.number,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly
+                                  ],
+                                  decoration: const InputDecoration(
+                                    labelText: "比率",
+                                    isDense: true,
+                                  ),
+                                  style: const TextStyle(fontSize: 14),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                sum == 0 ? "--%" : "$p%",
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12,
+                                    color: Colors.black87),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: "削除",
+                          onPressed: () {
+                            setState(() {
+                              items.removeAt(i);
+                            });
+                            _rebuildControllers();
+                          },
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ],
+                    ),
                   );
                 },
               ),
             ),
+
+            // アクション
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 FilledButton(
                   onPressed: items.length >= 2
                       ? () {
-                          final tmp = RouletteDef(
-                            id: UniqueKey().toString(),
-                            title: "未保存ルーレット",
-                            items: List<RouletteItem>.from(items),
-                            createdAt: DateTime.now().toIso8601String(),
-                            updatedAt: DateTime.now().toIso8601String(),
-                          );
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => SpinPage(def: tmp)));
-                        }
+                    final tmp = RouletteDef(
+                      id: UniqueKey().toString(),
+                      title: "未保存ルーレット",
+                      items: List<RouletteItem>.from(items),
+                      createdAt:
+                      DateTime.now().toIso8601String(),
+                      updatedAt:
+                      DateTime.now().toIso8601String(),
+                    );
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => SpinPage(def: tmp),
+                      ),
+                    );
+                  }
                       : null,
                   child: const Text("▶ 回す"),
                 ),
@@ -404,8 +715,8 @@ class _DefinePageState extends State<DefinePage> {
   }
 }
 
-/* ===================== 回す画面（豪華版） ===================== */
 
+// ===== BLOCK 5: spin page (wheel only, wait full 5s, overlay result after stop) =====
 class SpinPage extends StatefulWidget {
   final RouletteDef def;
   const SpinPage({super.key, required this.def});
@@ -414,174 +725,117 @@ class SpinPage extends StatefulWidget {
 }
 
 class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
-  // アニメ系
-  late AnimationController wheelCtrl;     // 本回転（加減速）
-  late AnimationController settleCtrl;    // ちょい戻り
+  late AnimationController wheelCtrl;
   late Animation<double> wheelAnim;
-  late Animation<double> settleAnim;
-
-  late AnimationController slotCtrl;      // スロット（スクロール）
-  late FixedExtentScrollController listController;
-
-  late AnimationController resultCtrl;    // 結果バウンド
-  late Animation<double> resultScale;
-
-  // パーティクル
-  late AnimationController particleCtrl;
-  List<_Particle> particles = [];
 
   final rand = Random();
-  int? selectedIndex;
-  double startAngle = 0.0; // 現在の円盤角度（ラジアン）
+  bool _spinning = false;     // 回転中ガード
+  double _angle = 0.0;        // 現在角度
+  String? _resultName;        // 停止後のみセット & 表示
+
+  static const _spinDuration = Duration(milliseconds: 5000); // ★5秒回す
+  static const _spinsCount = 15; // ★回転数（体感調整用）
 
   @override
   void initState() {
     super.initState();
-
-    wheelCtrl  = AnimationController(vsync: this, duration: const Duration(milliseconds: 4200));
-    settleCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
-    slotCtrl   = AnimationController(vsync: this, duration: const Duration(milliseconds: 4200));
-    listController = FixedExtentScrollController();
-
-    wheelAnim = TweenSequence<double>([
-      TweenSequenceItem(tween: CurveTween(curve: Curves.easeInCubic), weight: 22),
-      TweenSequenceItem(tween: CurveTween(curve: Curves.easeOutCubic), weight: 78),
-    ]).animate(wheelCtrl);
-    settleAnim = CurvedAnimation(parent: settleCtrl, curve: Curves.easeOutBack);
-
-    resultCtrl  = AnimationController(vsync: this, duration: const Duration(milliseconds: 320));
-    resultScale = Tween(begin: 1.0, end: 1.12).animate(CurvedAnimation(
-      parent: resultCtrl, curve: Curves.easeOutBack));
-
-    particleCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
-      ..addListener(() => setState(() {}));
+    wheelCtrl = AnimationController(vsync: this, duration: _spinDuration);
   }
 
   @override
   void dispose() {
     wheelCtrl.dispose();
-    settleCtrl.dispose();
-    slotCtrl.dispose();
-    resultCtrl.dispose();
-    particleCtrl.dispose();
-    listController.dispose();
     super.dispose();
   }
 
-  void _spawnParticles(Offset center) {
-    particles = List.generate(20, (_) {
-      final a = rand.nextDouble() * 2 * pi;
-      final v = 90 + rand.nextDouble() * 180; // 速度
-      final life = 0.6 + rand.nextDouble() * 0.4;
-      final color = Colors.primaries[rand.nextInt(Colors.primaries.length)];
-      return _Particle(
-        origin: center,
-        angle: a,
-        velocity: v,
-        life: life,
-        color: color,
-      );
-    });
-    particleCtrl
-      ..reset()
-      ..forward();
-  }
-
-  void _spin() async {
+  Future<void> _spin() async {
+    if (_spinning || _resultName != null) return; // 結果表示中は回せない
     final items = widget.def.items;
-    if (items.isEmpty) return;
+    if (items.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("候補は2件以上必要です")));
+      return;
+    }
 
-    // 1) 当選（重み付き）
+    setState(() {
+      _spinning = true;
+      _resultName = null; // 前回結果を消す
+    });
+
+    // --- 重み付き抽選で idx 決定 ---
     final weights = items.map((e) => e.weight).toList();
     final total = weights.reduce((a, b) => a + b);
     int r = rand.nextInt(total), acc = 0, idx = 0;
-    for (int i = 0; i < weights.length; i++) {
-      acc += weights[i];
-      if (r < acc) { idx = i; break; }
-    }
-    setState(() => selectedIndex = idx);
+    for (int i = 0; i < weights.length; i++) { acc += weights[i]; if (r < acc) { idx = i; break; } }
 
-    // 2) 目標角
+    // idx に対応する停止角（上ポインタ基準で中央に来る）
     final targetAngle = _targetAngleForIndex(idx);
 
-    // 3) スロット中央へ
-    listController.animateToItem(idx,
-      duration: const Duration(milliseconds: 4200),
-      curve: Curves.decelerate);
+    final begin = _angle;
+    final end = begin + _spinsCount * 2 * pi + _normalizeDelta(begin, targetAngle);
 
-    // 4) 円盤：ギュン 12回転 + 3%オーバー → ちょい戻し
-    final begin = startAngle;
-    final spins = 12 * 2 * pi;
-    final end   = spins + targetAngle;
-
-    // 本回転
+    // --- 5秒アニメーション（easeOut） ---
+    wheelAnim = CurvedAnimation(parent: wheelCtrl, curve: Curves.easeOutCubic);
     wheelCtrl
       ..reset()
       ..addListener(() {
         setState(() {
-          startAngle = begin + (end - begin) * wheelAnim.value;
+          _angle = begin + (end - begin) * wheelAnim.value;
         });
-      })
-      ..forward().whenComplete(() async {
-        final overshoot = end + (2 * pi * 0.03);
-        setState(() => startAngle = overshoot);
-
-        settleCtrl
-          ..reset()
-          ..addListener(() {
-            setState(() {
-              startAngle = overshoot - (overshoot - end) * settleAnim.value;
-            });
-          })
-          ..forward().whenComplete(() async {
-            // バウンド & パーティクル
-            resultCtrl
-              ..reset()
-              ..forward();
-            _spawnParticles(Offset.zero); // 実描画で中心に変換
-            await _updateLastAndBumpSaved();
-            // TODO: ここでSE/バイブを鳴らす
-          });
       });
+    await wheelCtrl.forward(); // ★ 完全停止まで待つ
+
+    // --- 停止と同時にだけ結果表示 ---
+    setState(() {
+      _angle = end;                 // 念のため最終角度に固定
+      _spinning = false;
+      _resultName = items[idx].name;
+    });
+
+    await _updateLastAndBumpSaved();
   }
 
+  // begin から target まで“正方向の最短差”に正規化
+  double _normalizeDelta(double begin, double target) {
+    double d = target - (begin % (2 * pi));
+    while (d < 0) d += 2 * pi;
+    return d;
+  }
+
+  // 上のポインタに対して index セグメントの中心角を返す
   double _targetAngleForIndex(int index) {
     final items = widget.def.items;
     final sum = items.fold<int>(0, (s, e) => s + e.weight);
     double acc = 0;
-    for (int i = 0; i < index; i++) {
-      acc += items[i].weight / sum;
-    }
+    for (int i = 0; i < index; i++) acc += items[i].weight / sum;
     final w = items[index].weight / sum;
-    final center = acc + w / 2; // [0,1)
-    final angleAtCenter = center * 2 * pi;
-    return angleAtCenter - pi / 2; // 12時に合わせる
+    final center = acc + w / 2;          // 0..1 の中心位置（右=0 から時計回り）
+    // ポインタを「上」に固定している場合、セグメント中心が上に来る回転角は
+    //   a = - center * 2π   （画面座標系で時計回りが正）
+    double a = -center * 2 * pi;
+    while (a < 0) a += 2 * pi;           // 0..2π に正規化
+    return a;
   }
+
+  String _displayName(String s) =>
+      s.runes.length <= 12 ? s : String.fromCharCodes(s.runes.take(12)) + "…";
 
   Future<void> _updateLastAndBumpSaved() async {
     final now = DateTime.now().toIso8601String();
+    final d = widget.def;
     final def = RouletteDef(
-      id: widget.def.id,
-      title: widget.def.title,
-      items: widget.def.items,
-      createdAt: widget.def.createdAt,
-      updatedAt: now,
-      lastUsedAt: now,
-      isPinned: widget.def.isPinned,
+      id: d.id, title: d.title, items: d.items,
+      createdAt: d.createdAt, updatedAt: now, lastUsedAt: now, isPinned: d.isPinned,
     );
     await Store.saveLast(def);
-
     final saved = await Store.loadSaved();
-    final i = saved.indexWhere((e) => e.id == widget.def.id);
-    if (i >= 0) {
-      saved[i] = def;
-      await Store.saveSaved(saved);
-    }
+    final i = saved.indexWhere((e) => e.id == d.id);
+    if (i >= 0) { saved[i] = def; await Store.saveSaved(saved); }
   }
 
-  String _displayName(String s) {
-    if (s.runes.length <= 10) return s;
-    return String.fromCharCodes(s.runes.take(10)) + "……";
+  void _resetForNext() {
+    setState(() {
+      _resultName = null; // 結果を消して次のスピンを許可
+    });
   }
 
   @override
@@ -593,165 +847,145 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
       appBar: AppBar(title: Text(widget.def.title)),
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: _spin,
-        child: Container(
-          decoration: const BoxDecoration(
-            // 背景：縦グラデ
-            gradient: LinearGradient(
-              colors: [Color(0xFFECF3FF), Color(0xFFFDF7FF)],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-          ),
-          child: Stack(
-            children: [
-              // ほんのりビネット
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: CustomPaint(painter: _VignettePainter()),
-                ),
-              ),
-              Column(
-                children: [
-                  const SizedBox(height: 12),
-                  // ルーレット円盤＋ポインタ＋パーティクル
-                  Expanded(
-                    flex: 6,
-                    child: LayoutBuilder(
-                      builder: (_, c) {
-                        final center = Offset(c.maxWidth / 2, c.maxHeight / 2);
-                        return Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            CustomPaint(
-                              painter: _WheelPainter(items: items, total: sum, angle: startAngle),
-                              size: Size(c.maxWidth, c.maxHeight),
-                            ),
-                            // センターハブ（金属風）
-                            CustomPaint(
-                              size: Size(c.maxWidth, c.maxHeight),
-                              painter: _HubPainter(),
-                            ),
-                            // ポインタ（発光）
-                            Align(
-                              alignment: Alignment.topCenter,
-                              child: Transform.translate(
-                                offset: const Offset(0, 10),
-                                child: CustomPaint(
-                                  size: const Size(30, 30),
-                                  painter: _PointerPainterGlow(),
-                                ),
-                              ),
-                            ),
-                            // パーティクル
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: _ParticlePainter(
-                                    particles: particles,
-                                    progress: particleCtrl.value,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                  // スロット（中央1行・上下半透明）
-                  Expanded(
-                    flex: 3,
-                    child: ScaleTransition(
-                      scale: resultScale,
-                      child: ListWheelScrollView.useDelegate(
-                        controller: listController,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemExtent: 56,
-                        perspective: 0.001,
-                        overAndUnderCenterOpacity: 0.35,
-                        childDelegate: ListWheelChildBuilderDelegate(
-                          builder: (_, i) {
-                            if (i == null || i < 0 || i >= items.length) return null;
-                            final isCenter = i == selectedIndex;
-                            return Center(
-                              child: Text(
-                                _displayName(items[i].name),
-                                maxLines: 1,
-                                overflow: TextOverflow.fade,
-                                style: TextStyle(
-                                  fontSize: isCenter ? 28 : 22,
-                                  fontWeight: isCenter ? FontWeight.w800 : FontWeight.w600,
-                                  color: isCenter ? Colors.black : Colors.black.withOpacity(0.7),
-                                  shadows: isCenter
-                                      ? const [
-                                          Shadow(blurRadius: 6, color: Colors.white, offset: Offset(0, 0)),
-                                          Shadow(blurRadius: 12, color: Colors.white, offset: Offset(0, 0)),
-                                        ]
-                                      : null,
-                                ),
-                              ),
-                            );
-                          },
-                          childCount: items.length,
+        onTap: (_spinning || _resultName != null) ? null : _spin, // 結果表示中は無効
+        child: Stack(
+          children: [
+            // ---- 円盤本体（装飾なし） ----
+            Column(
+              children: [
+                const SizedBox(height: 12),
+                Expanded(
+                  flex: 8,
+                  child: LayoutBuilder(builder: (_, c) {
+                    return Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        CustomPaint(
+                          painter: _WheelPainter(items: items, total: sum, angle: _angle),
+                          size: Size(c.maxWidth, c.maxHeight),
                         ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
+                        CustomPaint(size: Size(c.maxWidth, c.maxHeight), painter: _HubPainter()),
+                        Align(
+                          alignment: Alignment.topCenter,
+                          child: Transform.translate(
+                            offset: const Offset(0, 10),
+                            child: CustomPaint(size: const Size(30, 30), painter: _PointerPainterGlow()),
+                          ),
+                        ),
+                      ],
+                    );
+                  }),
+                ),
+                const SizedBox(height: 16),
+                if (!_spinning && _resultName == null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        FilledButton(onPressed: _spin, child: const Text("▶ もう一度回す")),
-                        OutlinedButton(onPressed: () => Navigator.pop(context), child: const Text("← ルーレットを選ぶ")),
                         FilledButton(
-                          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def))),
+                          onPressed: _spin,
+                          child: const Text("▶ 回す"),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
+                          ),
                           child: const Text("✎ 編集する"),
                         ),
                       ],
                     ),
                   ),
-                ],
+              ],
+            ),
+
+            // ---- 結果オーバーレイ（停止後のみ）----
+            if (_resultName != null)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withOpacity(0.4),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        _displayName(_resultName!),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 60,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          shadows: [Shadow(offset: Offset(2, 2), blurRadius: 4, color: Colors.black)],
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      // ★ 縦並びのボタン
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton(
+                                onPressed: _resetForNext,
+                                child: const Text("▶ もう一度回す"),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text("← ルーレットを選ぶ"),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton(
+                                onPressed: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
+                                ),
+                                child: const Text("✎ 編集する"),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ],
-          ),
+          ],
         ),
       ),
     );
   }
 }
 
-/* ===================== Painterたち ===================== */
-
-// 円盤（扇形＋回る文字＋煌めき）
+// ===== BLOCK 6: painters =====
 class _WheelPainter extends CustomPainter {
   final List<RouletteItem> items;
   final int total;
-  final double angle; // 現在角（ラジアン）
+  final double angle;
   _WheelPainter({required this.items, required this.total, required this.angle});
 
-  String _short(String s) => s.runes.length <= 10
-      ? s
-      : String.fromCharCodes(s.runes.take(10)) + "……";
+  String _short(String s) => s.runes.length <= 10 ? s : String.fromCharCodes(s.runes.take(10)) + "……";
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rBase  = min(size.width, size.height) * 0.44;
+    final r = min(size.width, size.height) * 0.44;
     final center = Offset(size.width / 2, size.height / 2);
-    final rect   = Rect.fromCircle(center: center, radius: rBase);
-
-    // 背景
-    canvas.drawCircle(center, rBase, Paint()..color = Colors.black.withOpacity(.04));
+    final rect = Rect.fromCircle(center: center, radius: r);
+    canvas.drawCircle(center, r, Paint()..color = Colors.black.withOpacity(.04));
     if (total <= 0) return;
 
-    // 扇形 & テキスト
-    double start = angle;
+    double start = angle - pi / 2;
     for (final e in items) {
       final sweep = (e.weight / total) * 2 * pi;
 
-      // セグメント（放射グラデ）
       final seg = Paint()
         ..style = PaintingStyle.fill
         ..shader = RadialGradient(
@@ -760,68 +994,45 @@ class _WheelPainter extends CustomPainter {
         ).createShader(rect);
       canvas.drawArc(rect, start, sweep, true, seg);
 
-      // セグメント境界の細線（視認性UP）
       final sep = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.3
         ..color = Colors.white.withOpacity(0.85);
       canvas.drawArc(rect, start, sweep, true, sep);
 
-      // 中心角
-      final midAngle = start + sweep / 2;
-      // ラベル位置
-      final labelR   = rBase * 0.62;
-      final labelPos = Offset(center.dx + cos(midAngle) * labelR,
-                               center.dy + sin(midAngle) * labelR);
+      final mid = start + sweep / 2;
+      final labelR = r * 0.62;
+      final labelPos = Offset(center.dx + cos(mid) * labelR, center.dy + sin(mid) * labelR);
 
-      // テキスト
-      final span = TextSpan(
-        text: _short(e.name),
-        style: const TextStyle(
-          color: Colors.black87,
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-        ),
-      );
-      final tp = TextPainter(text: span, textDirection: TextDirection.ltr)..layout(maxWidth: rBase*0.9);
+      final tp = TextPainter(
+        text: TextSpan(text: _short(e.name), style: const TextStyle(color: Colors.black87, fontSize: 14, fontWeight: FontWeight.w600)),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: r * 0.9);
 
       canvas.save();
-      // 文字が円と一緒に回る見た目（読みやすさ優先で+90°）
       canvas.translate(labelPos.dx, labelPos.dy);
-      canvas.rotate(midAngle + pi/2);
-      tp.paint(canvas, Offset(-tp.width/2, -tp.height/2));
+      canvas.rotate(mid + pi / 2);
+      tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
       canvas.restore();
 
       start += sweep;
     }
 
-    // 外縁
-    canvas.drawCircle(center, rBase, Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2
-      ..color = Colors.white.withOpacity(.95));
+    canvas.drawCircle(center, r, Paint()..style = PaintingStyle.stroke..strokeWidth = 2..color = Colors.white.withOpacity(.95));
 
-    // 回転角に同期した「煌めき」スイープ
     final sheen = Paint()
       ..shader = SweepGradient(
-        startAngle: angle,
-        endAngle: angle + pi/3,
-        colors: [
-          Colors.white.withOpacity(0.0),
-          Colors.white.withOpacity(0.10),
-          Colors.white.withOpacity(0.0),
-        ],
+        startAngle: angle, endAngle: angle + pi / 3,
+        colors: [Colors.white.withOpacity(0), Colors.white.withOpacity(0.1), Colors.white.withOpacity(0)],
       ).createShader(rect)
       ..blendMode = BlendMode.plus;
-    canvas.drawCircle(center, rBase * .98, sheen);
+    canvas.drawCircle(center, r * .98, sheen);
   }
 
   @override
-  bool shouldRepaint(covariant _WheelPainter old) =>
-      old.items != items || old.total != total || old.angle != angle;
+  bool shouldRepaint(covariant _WheelPainter old) => old.items != items || old.total != total || old.angle != angle;
 }
 
-// ポインタ（発光）
 class _PointerPainterGlow extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -831,123 +1042,49 @@ class _PointerPainterGlow extends CustomPainter {
       ..lineTo(size.width, size.height)
       ..close();
 
-    // グロー
-    final glow = Paint()
+    canvas.drawPath(path, Paint()
       ..color = Colors.orangeAccent.withOpacity(0.5)
-      ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 8);
-    canvas.drawPath(path, glow);
-
-    // 本体
-    final body = Paint()..color = Colors.orange.shade700;
-    canvas.drawPath(path, body);
-
-    // 縁取り
-    final stroke = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
-      ..color = Colors.white.withOpacity(0.9);
-    canvas.drawPath(path, stroke);
+      ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 8));
+    canvas.drawPath(path, Paint()..color = Colors.orange.shade700);
+    canvas.drawPath(path, Paint()
+      ..style = PaintingStyle.stroke..strokeWidth = 1.5..color = Colors.white.withOpacity(0.9));
   }
-
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-// 中央ハブ（金属風）
 class _HubPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final rBase  = min(size.width, size.height) * 0.44;
-    final center = Offset(size.width / 2, size.height / 2);
-
-    // 外環
-    final r1 = rBase * 0.14;
-    final r2 = rBase * 0.10;
-
-    // 放射グラデ
-    final outer = Paint()
-      ..shader = RadialGradient(
-        colors: [Colors.grey.shade300, Colors.grey.shade100],
-      ).createShader(Rect.fromCircle(center: center, radius: r1));
-    canvas.drawCircle(center, r1, outer);
-
-    final inner = Paint()
-      ..shader = RadialGradient(
-        colors: [Colors.white, Colors.grey.shade200],
-      ).createShader(Rect.fromCircle(center: center, radius: r2));
-    canvas.drawCircle(center, r2, inner);
-
-    // 細い十字の装飾
-    final line = Paint()
-      ..color = Colors.white.withOpacity(0.8)
-      ..strokeWidth = 1.2;
-    canvas.drawLine(Offset(center.dx - r2, center.dy), Offset(center.dx + r2, center.dy), line);
-    canvas.drawLine(Offset(center.dx, center.dy - r2), Offset(center.dx, center.dy + r2), line);
+    final r = min(size.width, size.height) * 0.44;
+    final c = Offset(size.width / 2, size.height / 2);
+    final r1 = r * 0.14, r2 = r * 0.10;
+    canvas.drawCircle(c, r1, Paint()..shader = RadialGradient(colors: [Colors.grey.shade300, Colors.grey.shade100]).createShader(Rect.fromCircle(center: c, radius: r1)));
+    canvas.drawCircle(c, r2, Paint()..shader = RadialGradient(colors: [Colors.white, Colors.grey.shade200]).createShader(Rect.fromCircle(center: c, radius: r2)));
+    final line = Paint()..color = Colors.white.withOpacity(0.8)..strokeWidth = 1.2;
+    canvas.drawLine(Offset(c.dx - r2, c.dy), Offset(c.dx + r2, c.dy), line);
+    canvas.drawLine(Offset(c.dx, c.dy - r2), Offset(c.dx, c.dy + r2), line);
   }
-
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-// ほんのりビネット
-class _VignettePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final paint = Paint()
-      ..shader = RadialGradient(
-        center: Alignment.center,
-        radius: 0.9,
-        colors: [Colors.transparent, Colors.black.withOpacity(0.06)],
-        stops: const [0.7, 1.0],
-      ).createShader(rect);
-    canvas.drawRect(rect, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-/* ========== パーティクル ========== */
-
+// ===== BLOCK 7: particles (unused now, kept for future) =====
 class _Particle {
   final Offset origin;
   final double angle;   // rad
   final double velocity; // px/s
-  final double life;    // 秒
+  final double life;    // sec
   final MaterialColor color;
-  _Particle({
-    required this.origin,
-    required this.angle,
-    required this.velocity,
-    required this.life,
-    required this.color,
-  });
+  _Particle({required this.origin, required this.angle, required this.velocity, required this.life, required this.color});
 }
 
 class _ParticlePainter extends CustomPainter {
   final List<_Particle> particles;
   final double progress; // 0..1
   _ParticlePainter({required this.particles, required this.progress});
-
   @override
-  void paint(Canvas canvas, Size size) {
-    if (particles.isEmpty) return;
-    final center = Offset(size.width / 2, size.height / 2 - size.shortestSide * 0.06);
-
-    for (final p in particles) {
-      final t = (progress / p.life).clamp(0.0, 1.0);
-      final dist = p.velocity * t * 0.012 * size.shortestSide / 400; // スケール
-      final pos = center + Offset(cos(p.angle) * dist, sin(p.angle) * dist);
-      final alpha = (1.0 - t).clamp(0.0, 1.0);
-      final paint = Paint()
-        ..color = p.color.shade400.withOpacity(alpha)
-        ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 2.5);
-      canvas.drawCircle(pos, 3, paint);
-    }
-  }
-
+  void paint(Canvas canvas, Size size) {}
   @override
-  bool shouldRepaint(covariant _ParticlePainter old) =>
-      old.particles != particles || old.progress != progress;
+  bool shouldRepaint(covariant _ParticlePainter old) => false;
 }
