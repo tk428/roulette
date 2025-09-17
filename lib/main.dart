@@ -331,17 +331,16 @@ class _RootPageState extends State<RootPage> {
           const SizedBox(height: 100), // 最下部の安全マージン
         ],
       ),
-      // 画面下に常設の「新規作成」だけ残す
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: FilledButton.icon(
-            icon: const Icon(Icons.add),
-            onPressed: () => _goDefine(),
-            label: const Text("新規ルーレットを作成"),
-          ),
-        ),
+
+      // 👇 ここが変更ポイント！bottomNavigationBar を削除して floatingActionButton に
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _goDefine(),
+        icon: const Icon(Icons.add, size: 28),
+        label: const Text("新規作成"),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Theme.of(context).colorScheme.onPrimary,
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 }
@@ -859,6 +858,64 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
       _resultName = null; // 前回結果を消す
     });
 
+    // 大きめ・丸め角・フル幅の共通ボタン
+    Widget _bigButtonSolid({
+      required BuildContext context,
+      required String label,
+      required IconData icon,
+      required VoidCallback? onPressed,
+      required Color bg,
+      required Color fg,
+    }) {
+      return SizedBox(
+        width: double.infinity,
+        height: 52,
+        child: FilledButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon),
+          label: Text(label),
+          style: FilledButton.styleFrom(
+            backgroundColor: bg,
+            foregroundColor: fg,
+            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+      );
+    }
+
+    Widget _bigButtonTonal({
+      required BuildContext context,
+      required String label,
+      required IconData icon,
+      required VoidCallback? onPressed,
+      required Color bg,
+      required Color fg,
+    }) {
+      return SizedBox(
+        width: double.infinity,
+        height: 52,
+        child: FilledButton.tonal(
+          onPressed: onPressed,
+          style: FilledButton.styleFrom(
+            backgroundColor: bg,
+            foregroundColor: fg,
+            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon),
+              const SizedBox(width: 10),
+              Text(label),
+            ],
+          ),
+        ),
+      );
+    }
+
+
     // --- 重み付き抽選で idx 決定 ---
     final weights = items.map((e) => e.weight).toList();
     final total = weights.reduce((a, b) => a + b);
@@ -933,6 +990,113 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
       _resultName = null; // 結果を消して次のスピンを許可
     });
   }
+
+  // 円周に沿って回転描画するユーティリティ
+  void _paintOutlinedTextRotated(
+      Canvas canvas, {
+        required Offset center,
+        required String text,
+        required double midAngle, // セグメントの中心角度(rad)
+        required double radiusForMaxWidth,
+        double fontSize = 14,
+        Color fillColor = Colors.white,
+        Color outlineColor = Colors.black,
+        double outlineWidth = 2,
+      }) {
+    // 接線方向：文字の底辺が円に沿うよう midAngle+π/2
+    double rot = midAngle + pi / 2;
+
+    // 左側に来た場合は逆さにならないよう 180°回転
+    if (cos(midAngle) < 0) {
+      rot += pi;
+    }
+
+    // テキスト描画準備
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: FontWeight.bold,
+          color: fillColor,
+          shadows: [
+            Shadow(
+              offset: const Offset(0, 0),
+              blurRadius: 0,
+              color: outlineColor,
+            ),
+          ],
+        ),
+      ),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: radiusForMaxWidth);
+
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(rot);
+    tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+    canvas.restore();
+  }
+
+
+  // ---- 共通ボタンヘルパー ----
+  Widget _bigButtonSolid({
+    required BuildContext context,
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    required Color bg,
+    required Color fg,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: FilledButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon),
+        label: Text(label),
+        style: FilledButton.styleFrom(
+          backgroundColor: bg,
+          foregroundColor: fg,
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+      ),
+    );
+  }
+
+  Widget _bigButtonTonal({
+    required BuildContext context,
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    required Color bg,
+    required Color fg,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: FilledButton.tonal(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: bg,
+          foregroundColor: fg,
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon),
+            const SizedBox(width: 10),
+            Text(label),
+          ],
+        ),
+      ),
+    );
+  }
+
 
   // ---------- ここから：BLOCK5内だけで完結する描画ユーティリティ ----------
   Color _shade(Color c, {double lightnessDelta = -0.08}) {
@@ -1084,26 +1248,28 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
           // セパレーターの白細線
           canvas.drawArc(rect, start, sweep, true, sepPaint);
 
-          // --- ラベル（アウトライン文字）
+          // --- ラベル（回転して接線方向に）
           final frac = it.weight / total;
           final fs = (12 + (frac * 24)).clamp(12, 20).toDouble();
           final mid = start + sweep / 2;
-          final labelR = r * 0.62; // 中心からの距離
+          final labelR = r * 0.62;
           final labelCenter = Offset(
             center.dx + cos(mid) * labelR,
             center.dy + sin(mid) * labelR,
           );
 
-          _paintOutlinedText(
+          _paintOutlinedTextRotated(
             canvas,
             center: labelCenter,
             text: it.name,
+            midAngle: mid,
+            radiusForMaxWidth: labelR,
             fontSize: fs,
             fillColor: Colors.white,
             outlineColor: Colors.black,
-            outlineWidth: 2.2,
-            maxWidth: r * 0.9,
+            outlineWidth: (fs / 7).clamp(1.0, 2.2),
           );
+
 
           start += sweep;
         }
@@ -1139,7 +1305,7 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final items = widget.def.items;
     final sum = items.fold<int>(0, (s, e) => s + e.weight);
-
+    final cs = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: Text(widget.def.title)),
       body: GestureDetector(
@@ -1235,31 +1401,36 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            SizedBox(
-                              width: double.infinity,
-                              child: FilledButton(
-                                onPressed: _resetForNext,
-                                child: const Text("▶ もう一度回す"),
-                              ),
+                            _bigButtonSolid(
+                              context: context,
+                              label: "もう一度回す",
+                              icon: Icons.refresh,
+                              onPressed: _resetForNext,
+                              bg: cs.primary,
+                              fg: cs.onPrimary,
                             ),
                             const SizedBox(height: 12),
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton(
-                                onPressed: () => Navigator.pop(context),
-                                child: const Text("← ルーレットを選ぶ"),
-                              ),
+
+                            _bigButtonTonal(
+                              context: context,
+                              label: "ルーレットを選ぶ",
+                              icon: Icons.list_alt,
+                              onPressed: () => Navigator.pop(context),
+                              bg: cs.secondaryContainer,
+                              fg: cs.onSecondaryContainer,
                             ),
                             const SizedBox(height: 12),
-                            SizedBox(
-                              width: double.infinity,
-                              child: FilledButton(
-                                onPressed: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
-                                ),
-                                child: const Text("✎ 編集する"),
+
+                            _bigButtonTonal(
+                              context: context,
+                              label: "編集する",
+                              icon: Icons.edit,
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
                               ),
+                              bg: cs.tertiaryContainer,
+                              fg: cs.onTertiaryContainer,
                             ),
                           ],
                         ),
