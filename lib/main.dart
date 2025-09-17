@@ -7,6 +7,80 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// ===== UTIL: outlined text & color tweak =====
+Color _shade(Color c, {double lightnessDelta = -0.08}) {
+  final hsl = HSLColor.fromColor(c);
+  final l = (hsl.lightness + lightnessDelta).clamp(0.0, 1.0);
+  return hsl.withLightness(l).toColor();
+}
+
+/// アウトライン付きテキスト描画（キャンバスに直描き）
+/// - pos は左上ではなく「テキスト中央」を置きたい座標を渡す
+/// - maxWidth で自動改行（最大2行）、長文は省略記号
+void paintOutlinedText(
+    Canvas canvas, {
+      required Offset center,
+      required String text,
+      double fontSize = 14,
+      Color fillColor = Colors.white,
+      Color outlineColor = Colors.black,
+      double outlineWidth = 2.0,
+      double maxWidth = 120,
+      TextAlign align = TextAlign.center,
+    }) {
+  // 本文
+  final base = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: TextStyle(
+        fontSize: fontSize,
+        height: 1.1,
+        fontWeight: FontWeight.w800,
+        color: fillColor,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+    textAlign: align,
+    maxLines: 2,
+    ellipsis: "…",
+  )..layout(maxWidth: maxWidth);
+
+  // アウトライン（8方向にオフセット描画）
+  final outline = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: TextStyle(
+        fontSize: fontSize,
+        height: 1.1,
+        fontWeight: FontWeight.w900,
+        color: outlineColor,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+    textAlign: align,
+    maxLines: 2,
+    ellipsis: "…",
+  )..layout(maxWidth: maxWidth);
+
+  final dx = -base.width / 2;
+  final dy = -base.height / 2;
+  final offsets = <Offset>[
+    Offset(-outlineWidth, 0),
+    Offset(outlineWidth, 0),
+    Offset(0, -outlineWidth),
+    Offset(0, outlineWidth),
+    Offset(-outlineWidth, -outlineWidth),
+    Offset(-outlineWidth, outlineWidth),
+    Offset(outlineWidth, -outlineWidth),
+    Offset(outlineWidth, outlineWidth),
+  ];
+  for (final o in offsets) {
+    outline.paint(canvas, center + Offset(dx, dy) + o);
+  }
+  base.paint(canvas, center + Offset(dx, dy));
+}
+
+
 void main() => runApp(const RouletteApp());
 
 class RouletteApp extends StatelessWidget {
@@ -723,7 +797,7 @@ class _DefinePageState extends State<DefinePage> {
 }
 
 
-// ===== BLOCK 5: spin page (wheel only, wait full 5s, overlay result after stop) =====
+// ===== BLOCK 5: spin page (cached wheel image, wait full 5s, overlay result after stop) =====
 class SpinPage extends StatefulWidget {
   final RouletteDef def;
   const SpinPage({super.key, required this.def});
@@ -743,6 +817,11 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
   static const _spinDuration = Duration(milliseconds: 5000); // ★5秒回す
   static const _spinsCount = 15; // ★回転数（体感調整用）
 
+  // --- 高速化：円盤を一度だけ画像に描いてキャッシュ ---
+  ui.Image? _wheelImage;
+  Size? _wheelImageSize;
+  bool _buildingImage = false;
+
   @override
   void initState() {
     super.initState();
@@ -750,8 +829,20 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
   }
 
   @override
+  void didUpdateWidget(covariant SpinPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 編集して戻ってきたなど、項目が変わったら画像キャッシュ破棄
+    if (oldWidget.def.items != widget.def.items) {
+      _wheelImage?.dispose();
+      _wheelImage = null;
+      _wheelImageSize = null;
+    }
+  }
+
+  @override
   void dispose() {
     wheelCtrl.dispose();
+    _wheelImage?.dispose();
     super.dispose();
   }
 
@@ -808,18 +899,16 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     return d;
   }
 
-  // 上のポインタに対して index セグメントの中心角を返す
+  // 上のポインタに対して index セグメントの中心角を返す（上＝-π/2 位置）
   double _targetAngleForIndex(int index) {
     final items = widget.def.items;
     final sum = items.fold<int>(0, (s, e) => s + e.weight);
     double acc = 0;
     for (int i = 0; i < index; i++) acc += items[i].weight / sum;
     final w = items[index].weight / sum;
-    final center = acc + w / 2;          // 0..1 の中心位置（右=0 から時計回り）
-    // ポインタを「上」に固定している場合、セグメント中心が上に来る回転角は
-    //   a = - center * 2π   （画面座標系で時計回りが正）
-    double a = -center * 2 * pi;
-    while (a < 0) a += 2 * pi;           // 0..2π に正規化
+    final center = acc + w / 2;          // 0..1 の中心位置
+    double a = -center * 2 * pi;         // 時計回りを正として上に合わせる
+    while (a < 0) a += 2 * pi;
     return a;
   }
 
@@ -845,6 +934,207 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     });
   }
 
+  // ---------- ここから：BLOCK5内だけで完結する描画ユーティリティ ----------
+  Color _shade(Color c, {double lightnessDelta = -0.08}) {
+    final hsl = HSLColor.fromColor(c);
+    final l = (hsl.lightness + lightnessDelta).clamp(0.0, 1.0);
+    return hsl.withLightness(l).toColor();
+  }
+
+  // アウトライン付きテキスト（中央座標指定・最大2行）
+// 互換性のため outlineColor / outlineWidth を残しつつ、未指定なら自動調整します。
+// 任意で bgColor を渡すと縁色の自動判定がより賢くなります。
+  void _paintOutlinedText(
+      Canvas canvas, {
+        required Offset center,
+        required String text,
+        double fontSize = 14,
+        Color fillColor = Colors.white,
+        double maxWidth = 120,
+        TextAlign align = TextAlign.center,
+
+        // 既存呼び出し互換
+        Color? outlineColor,
+        double? outlineWidth,
+
+        // 追加: 背景色（あれば縁色を自動決定に利用）
+        Color? bgColor,
+      }) {
+    // アウトライン幅：指定なければフォントサイズから算出（細字ほど細く）
+    final ow = (outlineWidth ?? (fontSize / 7)).clamp(1.0, 2.2);
+
+    // 縁色：指定なければ背景の明暗から自動
+    final oc = outlineColor ??
+        ((bgColor != null &&
+            ThemeData.estimateBrightnessForColor(bgColor) ==
+                Brightness.dark)
+            ? Colors.white.withOpacity(0.85)
+            : Colors.black.withOpacity(0.9));
+
+    // 本体（太すぎると潰れるので w600）
+    final base = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontSize: fontSize,
+          height: 1.1,
+          fontWeight: FontWeight.w600,
+          color: fillColor,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: align,
+      maxLines: 2,
+      ellipsis: "…",
+    )..layout(maxWidth: maxWidth);
+
+    // 縁（やや太め w800）
+    final outline = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontSize: fontSize,
+          height: 1.1,
+          fontWeight: FontWeight.w800,
+          color: oc,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: align,
+      maxLines: 2,
+      ellipsis: "…",
+    )..layout(maxWidth: maxWidth);
+
+    final dx = -base.width / 2;
+    final dy = -base.height / 2;
+
+    // 8方向オフセット（必要十分の4方向でもOKだが読みやすさ優先）
+    final offsets = <Offset>[
+      Offset(-ow, 0),
+      Offset(ow, 0),
+      Offset(0, -ow),
+      Offset(0, ow),
+      Offset(-ow, -ow),
+      Offset(-ow, ow),
+      Offset(ow, -ow),
+      Offset(ow, ow),
+    ];
+    for (final o in offsets) {
+      outline.paint(canvas, center + Offset(dx, dy) + o);
+    }
+    base.paint(canvas, center + Offset(dx, dy));
+  }
+
+
+  // ---------- ここまでユーティリティ ----------
+
+  // ================== 高速化：一度だけ画像に描画 ==================
+  Future<void> _ensureWheelImage(Size size) async {
+    if (_buildingImage) return;
+    if (_wheelImage != null &&
+        _wheelImageSize != null &&
+        (size.width - _wheelImageSize!.width).abs() < 1 &&
+        (size.height - _wheelImageSize!.height).abs() < 1) return;
+
+    _buildingImage = true;
+    try {
+      final items = widget.def.items;
+      final total = items.fold<int>(0, (s, e) => s + e.weight);
+      final dpr = ui.window.devicePixelRatio;
+      final w = (size.width * dpr).toInt().clamp(64, 4096);
+      final h = (size.height * dpr).toInt().clamp(64, 4096);
+
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+      canvas.scale(dpr, dpr);
+
+      final r = (size.shortestSide * 0.44);
+      final center = Offset(size.width / 2, size.height / 2);
+      final rect = Rect.fromCircle(center: center, radius: r);
+
+      // うっすら外縁
+      final bg = Paint()..color = Colors.black.withOpacity(.04);
+      canvas.drawCircle(center, r, bg);
+
+      if (total > 0) {
+        double start = -pi / 2; // 上基準
+        final segPaint = Paint()..style = PaintingStyle.fill;
+        final sepPaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = Colors.white.withOpacity(0.85);
+
+        for (final it in items) {
+          final sweep = (it.weight / total) * 2 * pi;
+
+          // --- セグメント塗り（放射グラデーションで外周を少し明るく）
+          final base = Color(it.color);
+          segPaint.shader = RadialGradient(
+            colors: [
+              _shade(base, lightnessDelta: -0.05), // 内側やや暗め
+              base,                                 // 中間
+              _shade(base, lightnessDelta: 0.06), // 外周ほんのり明るく
+            ],
+            stops: const [0.0, 0.82, 1.0],
+            center: Alignment.center,
+            radius: 0.98,
+          ).createShader(rect);
+          canvas.drawArc(rect, start, sweep, true, segPaint);
+
+          // セパレーターの白細線
+          canvas.drawArc(rect, start, sweep, true, sepPaint);
+
+          // --- ラベル（アウトライン文字）
+          final frac = it.weight / total;
+          final fs = (12 + (frac * 24)).clamp(12, 20).toDouble();
+          final mid = start + sweep / 2;
+          final labelR = r * 0.62; // 中心からの距離
+          final labelCenter = Offset(
+            center.dx + cos(mid) * labelR,
+            center.dy + sin(mid) * labelR,
+          );
+
+          _paintOutlinedText(
+            canvas,
+            center: labelCenter,
+            text: it.name,
+            fontSize: fs,
+            fillColor: Colors.white,
+            outlineColor: Colors.black,
+            outlineWidth: 2.2,
+            maxWidth: r * 0.9,
+          );
+
+          start += sweep;
+        }
+
+        // ハブ
+        final hub = Paint()..color = Colors.white;
+        canvas.drawCircle(center, r * 0.12, hub);
+        final hubStroke = Paint()
+          ..color = Colors.black.withOpacity(.08)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0;
+        canvas.drawCircle(center, r * 0.12, hubStroke);
+      }
+
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(w, h);
+
+      _wheelImage?.dispose();
+      if (mounted) {
+        setState(() {
+          _wheelImage = image;
+          _wheelImageSize = size;
+        });
+      } else {
+        image.dispose();
+      }
+    } finally {
+      _buildingImage = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = widget.def.items;
@@ -857,21 +1147,35 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
         onTap: (_spinning || _resultName != null) ? null : _spin, // 結果表示中は無効
         child: Stack(
           children: [
-            // ---- 円盤本体（装飾なし） ----
+            // ---- 円盤本体（画像キャッシュで超軽量） ----
             Column(
               children: [
                 const SizedBox(height: 12),
                 Expanded(
                   flex: 8,
                   child: LayoutBuilder(builder: (_, c) {
+                    final sz = Size(c.maxWidth, c.maxHeight);
+                    _ensureWheelImage(sz); // 非同期生成。生成中はフォールバック。
                     return Stack(
                       alignment: Alignment.center,
                       children: [
-                        CustomPaint(
-                          painter: _WheelPainter(items: items, total: sum, angle: _angle),
-                          size: Size(c.maxWidth, c.maxHeight),
-                        ),
-                        CustomPaint(size: Size(c.maxWidth, c.maxHeight), painter: _HubPainter()),
+                        if (_wheelImage != null && _wheelImageSize != null)
+                          CustomPaint(
+                            size: sz,
+                            painter: _ImageWheelPainter(image: _wheelImage!, angle: _angle),
+                          )
+                        else
+                          CustomPaint(
+                            size: sz,
+                            painter: _WheelFallbackPainter(
+                              items: items,
+                              total: sum,
+                              angle: _angle,
+                              shade: _shade,
+                              paintOutlinedText: _paintOutlinedText,
+                            ),
+                          ),
+                        CustomPaint(size: sz, painter: _HubPainter()),
                         Align(
                           alignment: Alignment.topCenter,
                           child: Transform.translate(
@@ -926,7 +1230,6 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
                         ),
                       ),
                       const SizedBox(height: 32),
-                      // ★ 縦並びのボタン
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 32),
                         child: Column(
@@ -971,6 +1274,126 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     );
   }
 }
+
+// ---------- 画像を回すだけの軽量ペインタ ----------
+class _ImageWheelPainter extends CustomPainter {
+  final ui.Image image;
+  final double angle;
+  _ImageWheelPainter({required this.image, required this.angle});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final dpr = ui.window.devicePixelRatio;
+    final src = Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
+    final dst = Rect.fromLTWH(0, 0, size.width, size.height);
+    final center = Offset(size.width / 2, size.height / 2);
+
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(angle);
+    canvas.translate(-center.dx, -center.dy);
+    canvas.drawImageRect(image, src, dst, Paint()..isAntiAlias = true..filterQuality = FilterQuality.medium);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _ImageWheelPainter old) => old.image != image || old.angle != angle;
+}
+
+// ---------- フォールバック（画像生成中だけ一瞬使う） ----------
+class _WheelFallbackPainter extends CustomPainter {
+  final List<RouletteItem> items;
+  final int total;
+  final double angle;
+
+  // SpinPage内のユーティリティを橋渡し（関数参照を受け取る）
+  final Color Function(Color c, {double lightnessDelta}) shade;
+  final void Function(Canvas canvas,
+      {required Offset center,
+      required String text,
+      double fontSize,
+      Color fillColor,
+      Color outlineColor,
+      double outlineWidth,
+      double maxWidth,
+      TextAlign align}) paintOutlinedText;
+
+  _WheelFallbackPainter({
+    required this.items,
+    required this.total,
+    required this.angle,
+    required this.shade,
+    required this.paintOutlinedText,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = (size.shortestSide * 0.44);
+    final center = Offset(size.width / 2, size.height / 2);
+    final rect = Rect.fromCircle(center: center, radius: r);
+
+    // 外縁のうっすら影
+    canvas.drawCircle(center, r, Paint()..color = Colors.black.withOpacity(.04));
+    if (total <= 0) return;
+
+    double start = angle - pi / 2; // 上基準
+    final segPaint = Paint()..style = PaintingStyle.fill;
+    final sepPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = Colors.white.withOpacity(0.85);
+
+    for (final it in items) {
+      final sweep = (it.weight / total) * 2 * pi;
+
+      final base = Color(it.color);
+      segPaint.shader = RadialGradient(
+        colors: [
+          shade(base, lightnessDelta: -0.05),
+          base,
+          shade(base, lightnessDelta: 0.06),
+        ],
+        stops: const [0.0, 0.82, 1.0],
+        center: Alignment.center,
+        radius: 0.98,
+      ).createShader(rect);
+      canvas.drawArc(rect, start, sweep, true, segPaint);
+      canvas.drawArc(rect, start, sweep, true, sepPaint);
+
+      // ラベル（フォールバックなので控えめサイズ）
+      final frac = it.weight / total;
+      final fs = (12 + (frac * 24)).clamp(12, 18).toDouble();
+      final mid = start + sweep / 2;
+      final labelR = r * 0.62;
+      final labelCenter = Offset(
+        center.dx + cos(mid) * labelR,
+        center.dy + sin(mid) * labelR,
+      );
+      paintOutlinedText(
+        canvas,
+        center: labelCenter,
+        text: it.name,
+        fontSize: fs,
+        fillColor: Colors.white,
+        outlineColor: Colors.black,
+        outlineWidth: 2.0,
+        maxWidth: r * 0.9,
+      );
+
+      start += sweep;
+    }
+
+    // 中心ハブ（簡易）
+    final hub = Paint()..color = Colors.white;
+    canvas.drawCircle(center, r * 0.12, hub);
+  }
+
+  @override
+  bool shouldRepaint(covariant _WheelFallbackPainter old) =>
+      old.items != items || old.total != total || old.angle != angle;
+}
+
+
 
 // ===== BLOCK 6: painters =====
 class _WheelPainter extends CustomPainter {
