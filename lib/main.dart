@@ -349,13 +349,18 @@ class _RootPageState extends State<RootPage> {
       ),
 
       // 👇 ここが変更ポイント！bottomNavigationBar を削除して floatingActionButton に
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _goDefine(),
-        icon: const Icon(Icons.add, size: 28),
-        label: const Text("新規作成"),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        foregroundColor: Theme.of(context).colorScheme.onPrimary,
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: _mainButton(
+            context: context,
+            label: "＋ 新しいルーレット",
+            icon: Icons.casino,
+            onPressed: () => _goDefine(),
+          ),
+        ),
       ),
+
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
@@ -1383,23 +1388,28 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
                 if (!_spinning && _resultName == null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    child: Column(
                       children: [
-                        FilledButton(
+                        _mainButton(
+                          context: context,
+                          label: "▶ 回す",
+                          icon: Icons.play_arrow,
                           onPressed: _spin,
-                          child: const Text("▶ 回す"),
                         ),
-                        FilledButton(
+                        const SizedBox(height: 12),
+                        _subButton(
+                          context: context,
+                          label: "✎ 編集する",
+                          icon: Icons.edit,
                           onPressed: () => Navigator.push(
                             context,
                             MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
                           ),
-                          child: const Text("✎ 編集する"),
                         ),
                       ],
                     ),
                   ),
+
               ],
             ),
 
@@ -1410,60 +1420,34 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
                 child: Container(
                   color: Colors.black.withOpacity(0.4),
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        _displayName(_resultName!),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 60,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          shadows: [Shadow(offset: Offset(2, 2), blurRadius: 4, color: Colors.black)],
-                        ),
+                      _mainButton(
+                        context: context,
+                        label: "▶ もう一度回す",
+                        icon: Icons.refresh,
+                        onPressed: _resetForNext,
                       ),
-                      const SizedBox(height: 32),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 32),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _bigButtonSolid(
-                              context: context,
-                              label: "もう一度回す",
-                              icon: Icons.refresh,
-                              onPressed: _resetForNext,
-                              bg: cs.primary,
-                              fg: cs.onPrimary,
-                            ),
-                            const SizedBox(height: 12),
-
-                            _bigButtonTonal(
-                              context: context,
-                              label: "ルーレットを選ぶ",
-                              icon: Icons.list_alt,
-                              onPressed: () => Navigator.pop(context),
-                              bg: cs.secondaryContainer,
-                              fg: cs.onSecondaryContainer,
-                            ),
-                            const SizedBox(height: 12),
-
-                            _bigButtonTonal(
-                              context: context,
-                              label: "編集する",
-                              icon: Icons.edit,
-                              onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
-                              ),
-                              bg: cs.tertiaryContainer,
-                              fg: cs.onTertiaryContainer,
-                            ),
-                          ],
+                      const SizedBox(height: 12),
+                      _subButton(
+                        context: context,
+                        label: "← ルーレットを選ぶ",
+                        icon: Icons.list_alt,
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      const SizedBox(height: 12),
+                      _subButton(
+                        context: context,
+                        label: "✎ 編集する",
+                        icon: Icons.edit,
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
                         ),
                       ),
                     ],
                   ),
+
                 ),
               ),
           ],
@@ -1718,6 +1702,81 @@ class _HubPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
+
+// ===== 共通ボタンビルダー =====
+Widget _mainButton({
+  required BuildContext context,
+  required String label,
+  required IconData icon,
+  required VoidCallback onPressed,
+}) {
+  final cs = Theme.of(context).colorScheme;
+  return SizedBox(
+    width: double.infinity,
+    height: 56,
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [cs.primary, cs.primaryContainer],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ElevatedButton.icon(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          shadowColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        icon: Icon(icon, size: 24),
+        label: Text(label),
+        onPressed: onPressed,
+      ),
+    ),
+  );
+}
+
+Widget _subButton({
+  required BuildContext context,
+  required String label,
+  required IconData icon,
+  required VoidCallback onPressed,
+}) {
+  final cs = Theme.of(context).colorScheme;
+  return SizedBox(
+    width: double.infinity,
+    height: 52,
+    child: ElevatedButton.icon(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: cs.secondaryContainer,
+        foregroundColor: cs.onSecondaryContainer,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+        textStyle: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      icon: Icon(icon, size: 22),
+      label: Text(label),
+      onPressed: onPressed,
+    ),
+  );
+}
+
 
 // ===== BLOCK 7: particles (unused now, kept for future) =====
 class _Particle {
