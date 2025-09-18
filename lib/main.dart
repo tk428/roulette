@@ -6,14 +6,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  // AdMob 初期化
-  await MobileAds.instance.initialize();
-  runApp(const MyApp());
-}
+
 
 
 // ===== UTIL: outlined text & color tweak =====
