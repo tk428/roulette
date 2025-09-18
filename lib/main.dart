@@ -89,9 +89,22 @@ class RouletteApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'ルーレット',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.blue),
+      theme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: Colors.blue, // ← 既存の colorSchemeSeed を活かす
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size(120, 44),                // 触りやすい最小サイズ
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 0.3),
+          ),
+        ),
+        // 他のTheme設定があればここに残してOK
+      ),
       home: const RootPage(),
     );
+
   }
 }
 
@@ -349,18 +362,19 @@ class _RootPageState extends State<RootPage> {
       ),
 
       // 👇 ここが変更ポイント！bottomNavigationBar を削除して floatingActionButton に
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: _mainButton(
-            context: context,
-            label: "＋ 新しいルーレット",
-            icon: Icons.casino,
-            onPressed: () => _goDefine(),
-          ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _goDefine(),
+        icon: const Icon(Icons.add, size: 30),
+        label: const Text(
+          "新規作成",
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
+        // 少し大きめに
+        extendedPadding: const EdgeInsets.symmetric(horizontal: 24),
+        // 色統一
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Theme.of(context).colorScheme.onPrimary,
       ),
-
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
@@ -781,34 +795,44 @@ class _DefinePageState extends State<DefinePage> {
             ),
 
             // アクション
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
               children: [
-                FilledButton(
-                  onPressed: items.length >= 2
-                      ? () {
+                ElevatedButton.icon(
+                  onPressed: items.length >= 2 ? () {
                     final tmp = RouletteDef(
                       id: UniqueKey().toString(),
                       title: "未保存ルーレット",
                       items: List<RouletteItem>.from(items),
-                      createdAt:
-                      DateTime.now().toIso8601String(),
-                      updatedAt:
-                      DateTime.now().toIso8601String(),
+                      createdAt: DateTime.now().toIso8601String(),
+                      updatedAt: DateTime.now().toIso8601String(),
                     );
                     Navigator.push(
                       context,
-                      MaterialPageRoute(
-                        builder: (_) => SpinPage(def: tmp),
-                      ),
+                      MaterialPageRoute(builder: (_) => SpinPage(def: tmp)),
                     );
-                  }
-                      : null,
-                  child: const Text("▶ 回す"),
+                  } : null,
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text("回す"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                  ),
                 ),
-                FilledButton(onPressed: _saveDialog, child: const Text("💾 保存")),
+                ElevatedButton.icon(
+                  onPressed: _saveDialog,
+                  icon: const Icon(Icons.save),
+                  label: const Text("保存"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+                    foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
+                  ),
+                ),
               ],
             ),
+
           ],
         ),
       ),
@@ -1012,27 +1036,179 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     });
   }
 
-  // 円周に沿って回転描画するユーティリティ
-  void _paintOutlinedTextRotated(
+  // 保存時のデフォルト名（DefinePageと同等のロジック）
+  Future<String> _nextDefaultTitleForSave() async {
+    final saved = await Store.loadSaved();
+    final used = <int>{};
+    final re = RegExp(r'^ルーレット(\d+)$');
+    for (final d in saved) {
+      final m = re.firstMatch(d.title);
+      if (m != null) {
+        final n = int.tryParse(m.group(1) ?? '');
+        if (n != null) used.add(n);
+      }
+    }
+    int n = 1;
+    while (used.contains(n)) n++;
+    return "ルーレット$n";
+  }
+
+// スピン画面からの保存ダイアログ（保存後もこの画面に留まる）
+  Future<void> _saveFromSpinWithDialog() async {
+    if (widget.def.items.length < 2) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text("候補は2件以上必要です")));
+      }
+      return;
+    }
+
+    final saved = await Store.loadSaved();
+    final defaultTitle = await _nextDefaultTitleForSave();
+
+    final titleCtl = TextEditingController(text: defaultTitle);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("ルーレットを保存"),
+        content: TextField(
+          controller: titleCtl,
+          maxLength: 100,
+          decoration: const InputDecoration(labelText: "タイトル（100文字まで）"),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("キャンセル")),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text("保存")),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    var title = titleCtl.text.trim().isEmpty ? defaultTitle : titleCtl.text.trim();
+
+    // タイトル重複は末尾に数字を足して回避
+    if (saved.any((e) => e.title == title)) {
+      int n = 2;
+      while (saved.any((e) => e.title == "$title$n")) n++;
+      title = "$title$n";
+    }
+
+    final now = DateTime.now().toIso8601String();
+    final d = widget.def;
+
+    // 既に同IDが保存済みなら上書き（タイトルは新しいものに）
+    final idx = saved.indexWhere((e) => e.id == d.id);
+    final def = RouletteDef(
+      id: d.id,
+      title: title,
+      items: List<RouletteItem>.from(d.items),
+      createdAt: idx >= 0 ? saved[idx].createdAt : now,
+      updatedAt: now,
+      lastUsedAt: now,
+      isPinned: idx >= 0 ? saved[idx].isPinned : false,
+    );
+
+    if (idx >= 0) {
+      saved[idx] = def;
+    } else {
+      saved.insert(0, def);
+    }
+    await Store.saveSaved(saved);
+    await Store.saveLast(def);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("保存しました")),
+      );
+    }
+  }
+
+
+  // 既存の保存済み一覧から「ルーレットN」の次番号を決める
+  Future<String> _nextDefaultTitle() async {
+    final saved = await Store.loadSaved();
+    final used = <int>{};
+    final re = RegExp(r'^ルーレット(\d+)$');
+    for (final d in saved) {
+      final m = re.firstMatch(d.title);
+      if (m != null) {
+        final n = int.tryParse(m.group(1) ?? '');
+        if (n != null) used.add(n);
+      }
+    }
+    int n = 1;
+    while (used.contains(n)) n++;
+    return "ルーレット$n";
+  }
+
+// SpinPage から即保存（すでに保存済みなら updated/lastUsed を更新）
+  Future<void> _quickSave() async {
+    final now = DateTime.now().toIso8601String();
+    final d = widget.def;
+    final saved = await Store.loadSaved();
+    final idx = saved.indexWhere((e) => e.id == d.id);
+
+    if (idx >= 0) {
+      final updated = RouletteDef(
+        id: d.id,
+        title: saved[idx].title, // 既存タイトル維持
+        items: d.items,
+        createdAt: saved[idx].createdAt,
+        updatedAt: now,
+        lastUsedAt: now,
+        isPinned: saved[idx].isPinned,
+      );
+      saved[idx] = updated;
+      await Store.saveSaved(saved);
+      await Store.saveLast(updated);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("保存を更新しました")),
+        );
+      }
+      return;
+    }
+
+    final title = await _nextDefaultTitle();
+    final def = RouletteDef(
+      id: d.id,
+      title: title,
+      items: List<RouletteItem>.from(d.items),
+      createdAt: now,
+      updatedAt: now,
+      lastUsedAt: now,
+      isPinned: false,
+    );
+    saved.insert(0, def);
+    await Store.saveSaved(saved);
+    await Store.saveLast(def);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("保存しました")),
+      );
+    }
+  }
+
+
+  // 円周の「半径方向」に合わせて回転（文字の“下”が中心側＝内向き）
+  void _paintRadialTextInward(
       Canvas canvas, {
         required Offset center,
         required String text,
-        required double midAngle, // セグメントの中心角度(rad)
-        required double radiusForMaxWidth,
+        required double midAngle,          // セグメント中央角（rad）
+        required double radiusForMaxWidth, // 行幅の上限見積り
         double fontSize = 14,
         Color fillColor = Colors.white,
         Color outlineColor = Colors.black,
         double outlineWidth = 2,
       }) {
-    // 接線方向：文字の底辺が円に沿うよう midAngle+π/2
-    double rot = midAngle + pi / 2;
+    // ラベルは「内向き（中心へ向けて下向き）」にしたいので
+    // キャンバスを “半径方向” に合わせて回す: rot = midAngle + π
+    // （通常のテキストは上が -Y ＝画面上なので、π 回転で下が中心側に来る）
+    double rot = midAngle + pi;
 
-    // 左側に来た場合は逆さにならないよう 180°回転
-    if (cos(midAngle) < 0) {
-      rot += pi;
-    }
-
-    // テキスト描画準備
+    // テキストを描画
     final tp = TextPainter(
       text: TextSpan(
         text: text,
@@ -1059,6 +1235,7 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
     canvas.restore();
   }
+
 
 
   // ---- 共通ボタンヘルパー ----
@@ -1269,7 +1446,7 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
           // セパレーターの白細線
           canvas.drawArc(rect, start, sweep, true, sepPaint);
 
-          // --- ラベル（回転して接線方向に）
+          // --- ラベル（内向き）※セクターからはみ出さない
           final frac = it.weight / total;
           final fs = (12 + (frac * 24)).clamp(12, 20).toDouble();
           final mid = start + sweep / 2;
@@ -1279,17 +1456,33 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
             center.dy + sin(mid) * labelR,
           );
 
-          _paintOutlinedTextRotated(
+// 1) このセグメントのパスを作成（中心→弧→中心）
+          final segPath = Path()
+            ..moveTo(center.dx, center.dy)
+            ..arcTo(rect, start, sweep, false)
+            ..close();
+
+// 2) ラベルが置かれる半径での弧の弦長（＝許容幅の上限）
+          final chord = 2 * labelR * sin(sweep / 2);
+          final maxW = chord * 0.88; // ちょい内側に寄せる
+
+          canvas.save();
+          canvas.clipPath(segPath);          // ← セクターでクリップ
+// 内向きに回転して中央に描画、幅は maxW までに制限（ellipsis は内部で）
+          _paintRadialTextInward(
             canvas,
             center: labelCenter,
             text: it.name,
             midAngle: mid,
-            radiusForMaxWidth: labelR,
+            radiusForMaxWidth: maxW,
             fontSize: fs,
             fillColor: Colors.white,
             outlineColor: Colors.black,
             outlineWidth: (fs / 7).clamp(1.0, 2.2),
           );
+          canvas.restore();
+
+
 
 
           start += sweep;
@@ -1329,15 +1522,10 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     final cs = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          "🎉 スピン！",
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        centerTitle: true,
+        automaticallyImplyLeading: true, // ← 戻る矢印だけ出す
+        title: const SizedBox.shrink(),  // ← タイトルは何も表示しない
       ),
+
 
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -1388,22 +1576,30 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
                 if (!_spinning && _resultName == null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: Column(
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
                       children: [
-                        _mainButton(
-                          context: context,
-                          label: "▶ 回す",
-                          icon: Icons.play_arrow,
-                          onPressed: _spin,
+                        ElevatedButton.icon(
+                          onPressed: _saveFromSpinWithDialog,        // ← 保存ダイアログを呼ぶ
+                          icon: const Icon(Icons.save_alt),
+                          label: const Text("保存する"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Theme.of(context).colorScheme.primary,
+                            foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                          ),
                         ),
-                        const SizedBox(height: 12),
-                        _subButton(
-                          context: context,
-                          label: "✎ 編集する",
-                          icon: Icons.edit,
+                        ElevatedButton.icon(
                           onPressed: () => Navigator.push(
                             context,
                             MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
+                          ),
+                          icon: const Icon(Icons.edit),
+                          label: const Text("編集する"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+                            foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
                           ),
                         ),
                       ],
@@ -1418,36 +1614,70 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
             if (_resultName != null)
               Positioned.fill(
                 child: Container(
-                  color: Colors.black.withOpacity(0.4),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _mainButton(
-                        context: context,
-                        label: "▶ もう一度回す",
-                        icon: Icons.refresh,
-                        onPressed: _resetForNext,
-                      ),
-                      const SizedBox(height: 12),
-                      _subButton(
-                        context: context,
-                        label: "← ルーレットを選ぶ",
-                        icon: Icons.list_alt,
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      const SizedBox(height: 12),
-                      _subButton(
-                        context: context,
-                        label: "✎ 編集する",
-                        icon: Icons.edit,
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
-                        ),
-                      ),
-                    ],
-                  ),
+                  color: Colors.black.withOpacity(0.40),
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 当選名（中央ドン）
+                          Text(
+                            _displayName(_resultName!),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 56,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                              letterSpacing: 0.3,
+                              shadows: [Shadow(offset: Offset(1, 2), blurRadius: 6, color: Colors.black87)],
+                            ),
+                          ),
+                          const SizedBox(height: 28),
 
+                          // 縦並びボタン：一番上だけ少し大きい
+                          ElevatedButton.icon(
+                            onPressed: _resetForNext,
+                            icon: const Icon(Icons.refresh, size: 26),
+                            label: const Text("もう一度回す"),
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size(260, 54),   // ← 少し大きめ
+                              backgroundColor: Theme.of(context).colorScheme.primary,
+                              foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                              textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+
+                          ElevatedButton.icon(
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.list_alt),
+                            label: const Text("ルーレットを選ぶ"),
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size(240, 46),
+                              backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+                              foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+
+                          ElevatedButton.icon(
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
+                            ),
+                            icon: const Icon(Icons.edit),
+                            label: const Text("編集する"),
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size(240, 46),
+                              backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+                              foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
               ),
           ],
@@ -1551,16 +1781,38 @@ class _WheelFallbackPainter extends CustomPainter {
         center.dx + cos(mid) * labelR,
         center.dy + sin(mid) * labelR,
       );
+      // 半径方向・内向きに回してから、(0,0) 中心に描画
+      canvas.save();
+      canvas.translate(labelCenter.dx, labelCenter.dy);
+      canvas.rotate(mid + pi); // ← 内向き
+      // セクターパス
+      final segPath = Path()
+        ..moveTo(center.dx, center.dy)
+        ..arcTo(rect, start, sweep, false)
+        ..close();
+
+// ラベル半径での弦長を上限とする
+      final chord = 2 * labelR * sin(sweep / 2);
+      final maxW = chord * 0.88;
+
+      canvas.save();
+      canvas.clipPath(segPath);           // ← はみ出し防止
+      canvas.translate(labelCenter.dx, labelCenter.dy);
+      canvas.rotate(mid + pi);            // ← 内向き（中心側が“下”）
+
       paintOutlinedText(
         canvas,
-        center: labelCenter,
+        center: Offset.zero,
         text: it.name,
         fontSize: fs,
         fillColor: Colors.white,
         outlineColor: Colors.black,
         outlineWidth: 2.0,
-        maxWidth: r * 0.9,
+        maxWidth: maxW,                   // ← 幅制限
+        align: TextAlign.center,
       );
+      canvas.restore();
+
 
       start += sweep;
     }
