@@ -299,7 +299,7 @@ class _RootPageState extends State<RootPage> {
             const Icon(Icons.casino, size: 26),
             const SizedBox(width: 8),
             const Text(
-              "ルーレット一覧",
+              "シンプルルーレット",
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
