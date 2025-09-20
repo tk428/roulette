@@ -9,7 +9,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 
 
-
 // ===== UTIL: outlined text & color tweak =====
 Color _shade(Color c, {double lightnessDelta = -0.08}) {
   final hsl = HSLColor.fromColor(c);
@@ -850,6 +849,7 @@ class SpinPage extends StatefulWidget {
   const SpinPage({super.key, required this.def});
   @override
   State<SpinPage> createState() => _SpinPageState();
+
 }
 
 class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
@@ -1653,7 +1653,7 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
                           const SizedBox(height: 12),
 
                           ElevatedButton.icon(
-                            onPressed: () => Navigator.pop(context),
+                            onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
                             icon: const Icon(Icons.list_alt),
                             label: const Text("ルーレットを選ぶ"),
                             style: ElevatedButton.styleFrom(
