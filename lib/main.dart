@@ -7,106 +7,77 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
+  // ここで縦画面固定
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
 
-// ===== UTIL: outlined text & color tweak =====
+  runApp(const RouletteApp());
+}
+
+// ===== UTIL: color tweak (used by _HomeWheelPainter) =====
 Color _shade(Color c, {double lightnessDelta = -0.08}) {
   final hsl = HSLColor.fromColor(c);
   final l = (hsl.lightness + lightnessDelta).clamp(0.0, 1.0);
   return hsl.withLightness(l).toColor();
 }
 
-/// アウトライン付きテキスト描画（キャンバスに直描き）
-/// - pos は左上ではなく「テキスト中央」を置きたい座標を渡す
-/// - maxWidth で自動改行（最大2行）、長文は省略記号
-void paintOutlinedText(
-    Canvas canvas, {
-      required Offset center,
-      required String text,
-      double fontSize = 14,
-      Color fillColor = Colors.white,
-      Color outlineColor = Colors.black,
-      double outlineWidth = 2.0,
-      double maxWidth = 120,
-      TextAlign align = TextAlign.center,
-    }) {
-  // 本文
-  final base = TextPainter(
-    text: TextSpan(
-      text: text,
-      style: TextStyle(
-        fontSize: fontSize,
-        height: 1.1,
-        fontWeight: FontWeight.w800,
-        color: fillColor,
-      ),
-    ),
-    textDirection: TextDirection.ltr,
-    textAlign: align,
-    maxLines: 2,
-    ellipsis: "…",
-  )..layout(maxWidth: maxWidth);
-
-  // アウトライン（8方向にオフセット描画）
-  final outline = TextPainter(
-    text: TextSpan(
-      text: text,
-      style: TextStyle(
-        fontSize: fontSize,
-        height: 1.1,
-        fontWeight: FontWeight.w900,
-        color: outlineColor,
-      ),
-    ),
-    textDirection: TextDirection.ltr,
-    textAlign: align,
-    maxLines: 2,
-    ellipsis: "…",
-  )..layout(maxWidth: maxWidth);
-
-  final dx = -base.width / 2;
-  final dy = -base.height / 2;
-  final offsets = <Offset>[
-    Offset(-outlineWidth, 0),
-    Offset(outlineWidth, 0),
-    Offset(0, -outlineWidth),
-    Offset(0, outlineWidth),
-    Offset(-outlineWidth, -outlineWidth),
-    Offset(-outlineWidth, outlineWidth),
-    Offset(outlineWidth, -outlineWidth),
-    Offset(outlineWidth, outlineWidth),
-  ];
-  for (final o in offsets) {
-    outline.paint(canvas, center + Offset(dx, dy) + o);
-  }
-  base.paint(canvas, center + Offset(dx, dy));
-}
-
-
-void main() => runApp(const RouletteApp());
-
 class RouletteApp extends StatelessWidget {
   const RouletteApp({super.key});
+
   @override
   Widget build(BuildContext context) {
+    // 明るめの水色
+    const mainBlue = Color(0xFF4FC3F7);
+
+    // fromSeed で作ってから「primary だけはこの色！」と上書き
+    final base = ColorScheme.fromSeed(
+      seedColor: mainBlue,
+      brightness: Brightness.light,
+    );
+    final scheme = base.copyWith(
+      primary: mainBlue,
+      primaryContainer: mainBlue.withOpacity(0.18),
+      secondary: mainBlue,
+      secondaryContainer: mainBlue.withOpacity(0.12),
+    );
+
     return MaterialApp(
       title: 'ルーレット',
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: Colors.blue, // ← 既存の colorSchemeSeed を活かす
+        colorScheme: scheme,
+        scaffoldBackgroundColor: scheme.background,
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            minimumSize: const Size(120, 44),                // 触りやすい最小サイズ
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 0.3),
+            backgroundColor: scheme.primary,
+            foregroundColor: scheme.onPrimary,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            textStyle: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
-        // 他のTheme設定があればここに残してOK
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(
+            foregroundColor: scheme.primary,
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: scheme.primary,
+            side: BorderSide(color: scheme.primary, width: 1.4),
+          ),
+        ),
       ),
       home: const RootPage(),
     );
-
   }
 }
 
@@ -181,690 +152,769 @@ class Store {
   }
 }
 
-// ===== BLOCK 3: root page (home) — simple, fixed create button, floating snackbars =====
+// ===== BLOCK 3A: home screen (タイトル画面) =====
 class RootPage extends StatefulWidget {
   const RootPage({super.key});
   @override
   State<RootPage> createState() => _RootPageState();
 }
 
-class _RootPageState extends State<RootPage> {
-  RouletteDef? last;
-  List<RouletteDef> saved = [];
+class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
+  double _angle = 0.0;
+  double _speed = _idleSpeed;
 
-  // スナックバー（下固定ボタンに被らないよう浮かせる）
-  SnackBar _okBar(String msg) => SnackBar(
-    content: Text(msg),
-    behavior: SnackBarBehavior.floating,
-    margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
-  );
+  static const double _idleSpeed = 0.01;  // 何もしてない時のゆっくり回転
+  static const double _maxSpeed  = 0.70;  // タップでここまで一気に加速
+
+  late final AnimationController _rotCtrl; // vsync 用のタイマー
+  RouletteDef? _last;
 
   @override
   void initState() {
     super.initState();
-    _loadAll();
+    _rotCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 16),
+    )..addListener(_onTick)
+      ..repeat();
+
+    _loadLast();
   }
 
-  Future<void> _loadAll() async {
+  Future<void> _loadLast() async {
     final lastJson = await Store.loadLast();
-    final savedList = await Store.loadSaved();
-    setState(() {
-      last = lastJson == null ? null : RouletteDef.fromJson(lastJson);
-      final pinned = savedList.where((e) => e.isPinned).toList();
-      final others = savedList.where((e) => !e.isPinned).toList()
-        ..sort((a, b) => (b.lastUsedAt ?? "").compareTo(a.lastUsedAt ?? ""));
-      saved = [...pinned, ...others];
-    });
-  }
-
-  void _deleteSaved(String id) async {
-    final list = await Store.loadSaved();
-    list.removeWhere((e) => e.id == id);
-    await Store.saveSaved(list);
-    _loadAll();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(_okBar("削除しました"));
-    }
-  }
-
-  void _togglePin(String id, bool pin) async {
-    final list = await Store.loadSaved();
-    final i = list.indexWhere((e) => e.id == id);
-    if (i >= 0) {
-      final d = list[i];
-      list[i] = RouletteDef(
-        id: d.id,
-        title: d.title,
-        items: d.items,
-        createdAt: d.createdAt,
-        updatedAt: d.updatedAt,
-        lastUsedAt: d.lastUsedAt,
-        isPinned: pin,
-      );
-      await Store.saveSaved(list);
-      _loadAll();
-    }
-  }
-
-  Future<void> _goDefine({RouletteDef? initial}) async {
-    // 戻り値は使わない（＝一覧で削除する押下時も単に戻るだけ）
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => DefinePage(initial: initial)),
-    );
     if (!mounted) return;
-    await _loadAll();
-  }
-
-  Widget _savedTile(RouletteDef d) {
-    final preview =
-        d.items.take(3).map((e) => e.name).join(", ") + (d.items.length > 3 ? "…" : "");
-    final pinned = d.isPinned;
-
-    return Card(
-      child: ListTile(
-        leading: Icon(pinned ? Icons.push_pin : Icons.circle_outlined),
-        title: Text(d.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: PopupMenuButton<String>(
-          onSelected: (v) {
-            if (v == "pin") _togglePin(d.id, !pinned);
-            if (v == "edit") _goDefine(initial: d);
-            if (v == "del") _deleteSaved(d.id);
-          },
-          itemBuilder: (_) => [
-            PopupMenuItem(value: "pin", child: Text(pinned ? "ピン解除" : "ピン留め")),
-            const PopupMenuItem(value: "edit", child: Text("編集")),
-            const PopupMenuItem(value: "del", child: Text("削除")),
-          ],
-        ),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => SpinPage(def: d)),
-        ).then((_) => _loadAll()),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final pinned = saved.where((e) => e.isPinned).toList();
-    final others = saved.where((e) => !e.isPinned).toList();
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            const Icon(Icons.casino, size: 26),
-            const SizedBox(width: 8),
-            const Text(
-              "シンプルルーレット",
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        centerTitle: false,
-      ),
-
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const Text("前回のルーレット", style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          if (last != null)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(last!.title, style: const TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        FilledButton(
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => SpinPage(def: last!)),
-                          ).then((_) => _loadAll()),
-                          child: const Text("▶ 回す"),
-                        ),
-                        const SizedBox(width: 12),
-                        OutlinedButton(
-                          onPressed: () => _goDefine(initial: last),
-                          child: const Text("✎ 編集する"),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            const Text("（前回のルーレットはまだありません）"),
-          const SizedBox(height: 24),
-          const Text("保存したルーレット", style: TextStyle(fontWeight: FontWeight.bold)),
-          if (pinned.isNotEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text("📌 ピン留め"),
-            ),
-          ...pinned.map(_savedTile),
-          if (others.isNotEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text("最近使った順"),
-            ),
-          ...others.map(_savedTile),
-          const SizedBox(height: 100), // 最下部の安全マージン
-        ],
-      ),
-
-      // 👇 ここが変更ポイント！bottomNavigationBar を削除して floatingActionButton に
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _goDefine(),
-        icon: const Icon(Icons.add, size: 30),
-        label: const Text(
-          "新規作成",
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-        ),
-        // 少し大きめに
-        extendedPadding: const EdgeInsets.symmetric(horizontal: 24),
-        // 色統一
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-    );
-  }
-}
-
-
-
-// ===== BLOCK 4: define page — responsive inputs, default numbering, save limit dialog =====
-class DefinePage extends StatefulWidget {
-  final RouletteDef? initial;
-  const DefinePage({super.key, this.initial});
-  @override
-  State<DefinePage> createState() => _DefinePageState();
-}
-
-class _DefinePageState extends State<DefinePage> {
-  // 追加用（常に表示・追加後も残す）
-  final _newNameCtl = TextEditingController();
-  final _newWeightCtl = TextEditingController(text: "1");
-  final _newPercent = ValueNotifier<String>("--%");
-  final _newNameFocus = FocusNode();
-
-  // 行ごとコントローラ（常時編集）
-  final List<TextEditingController> _nameCtls = [];
-  final List<TextEditingController> _weightCtls = [];
-
-  List<RouletteItem> items = [];
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.initial != null) items = List<RouletteItem>.from(widget.initial!.items);
-    _rebuildControllers();
-    _newWeightCtl.addListener(_updateNewPercent);
-    _updateNewPercent();
+    setState(() {
+      _last = lastJson == null ? null : RouletteDef.fromJson(lastJson);
+    });
   }
 
   @override
   void dispose() {
-    _newNameCtl.dispose();
-    _newWeightCtl.dispose();
-    _newPercent.dispose();
-    _newNameFocus.dispose();
+    _rotCtrl..removeListener(_onTick)..dispose();
+    super.dispose();
+  }
+
+  void _onTick() {
+    setState(() {
+      _angle += _speed;
+      if (_angle > 2 * pi) _angle -= 2 * pi;
+      _speed *= 0.97;
+      if (_speed < _idleSpeed) _speed = _idleSpeed;
+    });
+  }
+
+  void _onWheelTap() {
+    setState(() {
+      const double impulse = 0.25;
+      _speed = (_speed + impulse).clamp(_idleSpeed, _maxSpeed);
+    });
+  }
+
+  void _goCreate() {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const QuickInputPage()));
+  }
+
+  void _goLast() {
+    if (_last == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('前回のルーレットはまだありません')));
+      return;
+    }
+    Navigator.push(context, MaterialPageRoute(builder: (_) => QuickInputPage(initial: _last!)));
+  }
+
+  void _goSaved() {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const SavedListPage()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      appBar: AppBar(
+        toolbarHeight: 90,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        elevation: 0,
+        centerTitle: true,
+        title: const Text(
+          'ルーレット',
+          style: TextStyle(
+            fontSize: 32,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.2,
+            height: 1.0,
+            shadows: [Shadow(offset: Offset(0, 2), blurRadius: 6, color: Colors.black26)],
+          ),
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16, bottom: 0),
+            child: IconButton(
+              icon: const Icon(Icons.settings_outlined),
+              iconSize: 30,
+              tooltip: '設定',
+              onPressed: () {/* 未実装 */},
+            ),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+          child: Column(
+            children: [
+              const SizedBox(height: 8),
+              Expanded(
+                child: Center(
+                  child: AspectRatio(
+                    aspectRatio: 1,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _onWheelTap,
+                      child: Transform.rotate(
+                        angle: _angle,
+                        child: CustomPaint(painter: _HomeWheelPainter()),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 80,
+                child: ElevatedButton(
+                  onPressed: _goCreate,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: cs.primary,
+                    foregroundColor: cs.onPrimary,
+                    elevation: 10,
+                    shadowColor: Colors.black.withOpacity(0.30),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                    textStyle: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                  child: const Text('ルーレットを作る'),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: Material(
+                      elevation: 2,
+                      borderRadius: BorderRadius.circular(14),
+                      color: Colors.transparent,
+                      child: OutlinedButton(
+                        onPressed: _goLast,
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: const Text('前回のルーレット'),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Material(
+                      elevation: 2,
+                      borderRadius: BorderRadius.circular(14),
+                      color: Colors.transparent,
+                      child: OutlinedButton(
+                        onPressed: _goSaved,
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: const Text('保存済みルーレット'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// タイトル画面用のルーレット描画（セグメント＋中心の白丸）
+class _HomeWheelPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final r = size.shortestSide * 0.45;
+    final rect = Rect.fromCircle(center: center, radius: r);
+
+    // 落ち影
+    final shadowPaint = Paint()
+      ..color = Colors.black.withOpacity(0.18)
+      ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, 18);
+    canvas.drawCircle(center + const Offset(0, 8), r * 0.94, shadowPaint);
+
+    // セグメント色
+    final colors = <Color>[
+      Colors.redAccent,
+      Colors.orangeAccent,
+      Colors.yellow.shade600,
+      Colors.lightGreenAccent.shade400,
+      Colors.lightBlueAccent,
+      Colors.purpleAccent,
+    ];
+    double start = -pi / 2;
+    final sweep = 2 * pi / colors.length;
+    final segPaint = Paint()..style = PaintingStyle.fill;
+    for (final c in colors) {
+      segPaint.shader = RadialGradient(
+        colors: [_shade(c, lightnessDelta: -0.08), c, _shade(c, lightnessDelta: 0.06)],
+        stops: const [0.0, 0.7, 1.0],
+        center: const Alignment(0.0, -0.2),
+        radius: 1.0,
+      ).createShader(rect);
+      canvas.drawArc(rect, start, sweep, true, segPaint);
+      start += sweep;
+    }
+
+    // 外周リム
+    final rimPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..shader = SweepGradient(
+        startAngle: -pi / 2,
+        endAngle: 3 * pi / 2,
+        colors: [
+          Colors.white.withOpacity(0.7),
+          Colors.white.withOpacity(0.0),
+          Colors.black.withOpacity(0.12),
+          Colors.white.withOpacity(0.4),
+        ],
+      ).createShader(rect);
+    canvas.drawCircle(center, r - 1, rimPaint);
+
+    // 中心の白丸
+    final hubR = r * 0.45;
+    final hubRect = Rect.fromCircle(center: center, radius: hubR);
+    final hubPaint = Paint()
+      ..shader = RadialGradient(
+        colors: [Colors.white, Colors.grey.shade200],
+        center: const Alignment(-0.15, -0.15),
+        radius: 1.0,
+      ).createShader(hubRect);
+    canvas.drawCircle(center, hubR, hubPaint);
+
+    final hubStroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..color = Colors.black.withOpacity(0.10);
+    canvas.drawCircle(center, hubR, hubStroke);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ===== BLOCK 3B: quick input page =====
+class QuickInputPage extends StatefulWidget {
+  final RouletteDef? initial;
+  const QuickInputPage({super.key, this.initial});
+  @override
+  State<QuickInputPage> createState() => _QuickInputPageState();
+}
+
+class _QuickInputPageState extends State<QuickInputPage> {
+  final List<TextEditingController> _nameCtls = [];
+  final List<TextEditingController> _weightCtls = [];
+  final List<int> _colors = [];
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initial != null) {
+      for (final it in widget.initial!.items) {
+        _nameCtls.add(TextEditingController(text: it.name));
+        _weightCtls.add(TextEditingController(text: it.weight.toString()));
+        _colors.add(it.color);
+      }
+      if (_nameCtls.length < 2) _ensureMinRows();
+    } else {
+      _ensureMinRows();
+    }
+  }
+
+  void _ensureMinRows() {
+    while (_nameCtls.length < 2) {
+      _addRow();
+    }
+  }
+
+  void _addRow({String name = '', int weight = 1, int? color}) {
+    setState(() {
+      _nameCtls.add(TextEditingController(text: name));
+      _weightCtls.add(TextEditingController(text: weight.toString()));
+      _colors.add(
+        color ??
+            Colors.primaries[_colors.length % Colors.primaries.length]
+                .shade400
+                .value,
+      );
+    });
+  }
+
+  void _removeRow(int index) {
+    if (_nameCtls.length <= 2) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('項目は最低2つ必要です')));
+      return;
+    }
+    setState(() {
+      _nameCtls[index].dispose();
+      _weightCtls[index].dispose();
+      _nameCtls.removeAt(index);
+      _weightCtls.removeAt(index);
+      _colors.removeAt(index);
+    });
+  }
+
+  @override
+  void dispose() {
     for (final c in _nameCtls) c.dispose();
     for (final c in _weightCtls) c.dispose();
     super.dispose();
   }
 
-  int get totalWeight => items.fold<int>(0, (s, e) => s + e.weight);
+  int _parseWeight(TextEditingController c) {
+    final v = int.tryParse(c.text.trim()) ?? 1;
+    return v.clamp(1, 100);
+  }
 
-  void _rebuildControllers() {
-    for (final c in _nameCtls) c.dispose();
-    for (final c in _weightCtls) c.dispose();
-    _nameCtls
-      ..clear()
-      ..addAll(items.map((e) => TextEditingController(text: e.name)));
-    _weightCtls
-      ..clear()
-      ..addAll(items.map((e) => TextEditingController(text: e.weight.toString())));
-    for (int i = 0; i < _weightCtls.length; i++) {
-      _weightCtls[i].addListener(() => _applyEdit(i));
-    }
+  Future<void> _onSpin() async {
+    final List<RouletteItem> items = [];
     for (int i = 0; i < _nameCtls.length; i++) {
-      _nameCtls[i].addListener(() => _applyEdit(i));
-    }
-    setState(() {});
-  }
-
-  void _applyEdit(int index) {
-    if (index < 0 || index >= items.length) return;
-    final name = _nameCtls[index].text;
-    var w = int.tryParse(_weightCtls[index].text) ?? items[index].weight;
-    w = w.clamp(1, 100);
-    items[index] = RouletteItem(name: name, weight: w, color: items[index].color);
-    setState(() {}); // % 再計算用
-  }
-
-  void _updateNewPercent() {
-    final w = int.tryParse(_newWeightCtl.text) ?? 1;
-    final tot = totalWeight + max(1, w);
-    final p = tot == 0 ? "--" : (w / tot * 100).toStringAsFixed(1);
-    _newPercent.value = "$p%";
-  }
-
-  void _add() {
-    final name = _newNameCtl.text.trim();
-    if (name.isEmpty) {
-      _newNameFocus.requestFocus();
-      return;
-    }
-    if (items.length >= 100) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text("最大100件までです")));
-      return;
-    }
-    var w = int.tryParse(_newWeightCtl.text) ?? 1;
-    w = w.clamp(1, 100);
-    setState(() {
-      final color = Colors.primaries[items.length % Colors.primaries.length]
-          .shade400
-          .value;
+      final name = _nameCtls[i].text.trim();
+      if (name.isEmpty) continue;
+      final w = _parseWeight(_weightCtls[i]);
+      final color = _colors[i];
       items.add(RouletteItem(name: name, weight: w, color: color));
-      _newNameCtl.clear();
-      _newWeightCtl.text = "1";
-      _updateNewPercent();
-      _rebuildControllers();
-      _newNameFocus.requestFocus();
-    });
-  }
-
-  // 欠番の最小Nで「ルーレットN」を返す
-  String _nextDefaultTitle(List<RouletteDef> saved) {
-    final used = <int>{};
-    final re = RegExp(r'^ルーレット(\d+)$');
-    for (final d in saved) {
-      final m = re.firstMatch(d.title);
-      if (m != null) {
-        final n = int.tryParse(m.group(1) ?? '');
-        if (n != null) used.add(n);
-      }
     }
-    int n = 1;
-    while (used.contains(n)) n++;
-    return "ルーレット$n";
-  }
-
-  Future<void> _saveDialog() async {
     if (items.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("候補は2件以上必要です")),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('項目を2つ以上入力してください')));
       return;
     }
-    final saved = await Store.loadSaved();
-    final defaultTitle = _nextDefaultTitle(saved);
-
-    final titleCtl = TextEditingController(text: defaultTitle);
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("ルーレットを保存"),
-        content: TextField(
-          controller: titleCtl,
-          maxLength: 100,
-          decoration:
-          const InputDecoration(labelText: "タイトル（100文字まで）"),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text("キャンセル")),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text("保存")),
-        ],
-      ),
-    );
-    if (ok != true) return;
-
-    var title = titleCtl.text.trim().isEmpty
-        ? defaultTitle
-        : titleCtl.text.trim();
-
-    // タイトル重複は末尾に数字を足して回避
-    if (saved.any((e) => e.title == title)) {
-      int n = 2;
-      while (saved.any((e) => e.title == "$title$n")) n++;
-      title = "$title$n";
-    }
-
-    // 上限チェック（サイレント削除しない）
-    const maxSaves = 100;
-    if (saved.length >= maxSaves) {
-      if (context.mounted) {
-        final goList = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text("保存数の上限"),
-            content: const Text("ルーレット保存数が上限に達しています。\n不要なルーレットを削除してください。"),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text("閉じる"),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text("一覧で削除する"),
-              ),
-            ],
-          ),
-        );
-
-        if (goList == true) {
-          // ★ どこから来ていても RootPage（最初のRoute＝一覧）まで戻る
-          Navigator.of(context).popUntil((route) => route.isFirst);
-        }
-      }
-      return; // 保存処理はしない
-    }
-
-
 
     final now = DateTime.now().toIso8601String();
     final def = RouletteDef(
       id: UniqueKey().toString(),
-      title: title,
-      items: List<RouletteItem>.from(items),
+      title: '未保存ルーレット',
+      items: items,
       createdAt: now,
       updatedAt: now,
       lastUsedAt: null,
       isPinned: false,
     );
 
-    saved.insert(0, def);
-    await Store.saveSaved(saved);
     await Store.saveLast(def);
-
     if (!mounted) return;
-    // RootPage側の下固定ボタンに被らないスナックバー（RootPageでも定義してるが、ここでも安全に浮かせる）
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text("保存しました"),
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+    Navigator.push(context, MaterialPageRoute(builder: (_) => SpinPage(def: def)));
+  }
+
+  InputDecoration _fieldDec(BuildContext context, String label) {
+    final cs = Theme.of(context).colorScheme;
+    return InputDecoration(
+      labelText: label,
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(width: 1.4, color: Color(0xFFDBDEE3)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(width: 1.4, color: Color(0xFFDBDEE3)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(width: 2, color: cs.primary),
       ),
     );
-    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    final sum = totalWeight;
+    final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-          title:
-          Text(widget.initial == null ? "新規ルーレット作成" : "ルーレット編集")),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // 新規入力エリア：項目名を広め・比率は柔軟に縮む
-            Card(
-              elevation: 1.5,
-              margin: const EdgeInsets.only(bottom: 12),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                child: Column(
+      appBar: AppBar(title: const Text('ルーレットを作る')),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: ListView.builder(
+            padding: const EdgeInsets.only(bottom: 140),
+            itemCount: _nameCtls.length,
+            itemBuilder: (context, index) {
+              final canDelete = _nameCtls.length > 2;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text("新規項目を追加",
-                        style: TextStyle(
-                            fontWeight: FontWeight.w700, fontSize: 14)),
-                    const SizedBox(height: 8),
-                    // ← ここから置換（Row → Column 縦積み）
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // 項目名：フル幅
-                        TextField(
-                          focusNode: _newNameFocus,
-                          controller: _newNameCtl,
-                          maxLength: 100,
-                          decoration: const InputDecoration(
-                            labelText: "項目名（100文字まで）",
-                            counterText: "",
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-
-                        // 比率 + %：横並び（必要に応じて縮む）
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _newWeightCtl,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                                decoration: const InputDecoration(
-                                  labelText: "比率", // ← （1-100）の括弧はやめて短く
-                                  isDense: true,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            ValueListenableBuilder<String>(
-                              valueListenable: _newPercent,
-                              builder: (_, v, __) => Text(
-                                v, // 例: "23.1%"
-                                style: const TextStyle(fontWeight: FontWeight.w700),
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        // 追記：少し補足（任意なら消してOK）
-                        const SizedBox(height: 4),
-                        const Text(
-                          "※ 比率は1〜100、%は現在の合計に対する目安です。",
-                          style: TextStyle(fontSize: 12, color: Colors.black54),
-                        ),
-
-                        const SizedBox(height: 12),
-
-                        // 追加ボタン：下にフル幅で
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: _add,
-                            icon: const Icon(Icons.add),
-                            label: const Text("追加"),
-                          ),
-                        ),
-                      ],
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: _nameCtls[index],
+                        maxLength: 30,
+                        style: const TextStyle(fontSize: 18, color: Colors.black87),
+                        decoration: _fieldDec(context, '項目名'),
+                      ),
                     ),
-
-                    const SizedBox(height: 4),
-                    const Text("※ このカードは“入力中”。下の一覧は“追加済み”。",
-                        style:
-                        TextStyle(fontSize: 12, color: Colors.black54)),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 88,
+                      child: TextField(
+                        controller: _weightCtls[index],
+                        textAlign: TextAlign.center,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        style: const TextStyle(fontSize: 18, color: Colors.black87),
+                        decoration: _fieldDec(context, '比率'),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      tooltip: '削除',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: canDelete ? () => _removeRow(index) : null,
+                      color: canDelete ? Colors.red.shade400 : Colors.black26,
+                    ),
                   ],
                 ),
-              ),
-            ),
-
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text("追加済みの項目",
-                  style: TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 13)),
-            ),
-            const SizedBox(height: 6),
-
-            // 追加済みリスト（白背景のまま・レスポンシブ）
-            Expanded(
-              child: ListView.separated(
-                itemCount: items.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (_, i) {
-                  final e = items[i];
-                  final p = sum == 0
-                      ? "--"
-                      : (e.weight / sum * 100).toStringAsFixed(1);
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                        vertical: 6, horizontal: 2),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: CircleAvatar(
-                              backgroundColor: Color(e.color), radius: 9),
-                        ),
-                        // 項目名（広く取る）
-                        Expanded(
-                          flex: 2,
-                          child: TextField(
-                            controller: _nameCtls[i],
-                            maxLength: 100,
-                            decoration: const InputDecoration(
-                              labelText: "項目名",
-                              counterText: "",
-                              isDense: true,
-                            ),
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        // 比率（最小幅を確保しつつ縮む）
-                        Flexible(
-                          flex: 1,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: TextField(
-                                  controller: _weightCtls[i],
-                                  keyboardType: TextInputType.number,
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.digitsOnly
-                                  ],
-                                  decoration: const InputDecoration(
-                                    labelText: "比率",
-                                    isDense: true,
-                                  ),
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                sum == 0 ? "--%" : "$p%",
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 12,
-                                    color: Colors.black87),
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: "削除",
-                          onPressed: () {
-                            setState(() {
-                              items.removeAt(i);
-                            });
-                            _rebuildControllers();
-                          },
-                          icon: const Icon(Icons.delete_outline),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-
-            // アクション
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: items.length >= 2 ? () {
-                    final tmp = RouletteDef(
-                      id: UniqueKey().toString(),
-                      title: "未保存ルーレット",
-                      items: List<RouletteItem>.from(items),
-                      createdAt: DateTime.now().toIso8601String(),
-                      updatedAt: DateTime.now().toIso8601String(),
-                    );
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => SpinPage(def: tmp)),
-                    );
-                  } : null,
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text("回す"),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
+              );
+            },
+          ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                height: 52,
+                width: double.infinity,
+                child: FilledButton.tonalIcon(
+                  onPressed: _addRow,
+                  icon: const Icon(Icons.add),
+                  label: const Text('項目を追加'),
+                  style: FilledButton.styleFrom(
+                    textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                    backgroundColor: cs.secondaryContainer,
+                    foregroundColor: cs.onSecondaryContainer,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                 ),
-                ElevatedButton.icon(
-                  onPressed: _saveDialog,
-                  icon: const Icon(Icons.save),
-                  label: const Text("保存"),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-                    foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 72,
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _onSpin,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: cs.primary,
+                    foregroundColor: cs.onPrimary,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
+                  child: const Text('ルーレットを回す'),
                 ),
-              ],
-            ),
-
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
+// ===== BLOCK 3C: saved list page =====
+class SavedListPage extends StatefulWidget {
+  const SavedListPage({super.key});
+  @override
+  State<SavedListPage> createState() => _SavedListPageState();
+}
 
-// ===== BLOCK 5: spin page (cached wheel image, wait full 5s, overlay result after stop) =====
+class _SavedListPageState extends State<SavedListPage> {
+  List<RouletteDef> _saved = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final list = await Store.loadSaved();
+    list.sort((a, b) {
+      final pin = (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0);
+      if (pin != 0) return pin;
+      return (b.lastUsedAt ?? '').compareTo(a.lastUsedAt ?? '');
+    });
+    setState(() => _saved = list);
+  }
+
+  Future<void> _saveAll(List<RouletteDef> list) async {
+    await Store.saveSaved(list);
+    await _load();
+  }
+
+  Future<void> _togglePin(RouletteDef d) async {
+    final list = await Store.loadSaved();
+    final i = list.indexWhere((e) => e.id == d.id);
+    if (i >= 0) {
+      list[i] = RouletteDef(
+        id: d.id,
+        title: d.title,
+        items: d.items,
+        createdAt: d.createdAt,
+        updatedAt: DateTime.now().toIso8601String(),
+        lastUsedAt: d.lastUsedAt,
+        isPinned: !d.isPinned,
+      );
+      await _saveAll(list);
+    }
+  }
+
+  Future<void> _rename(RouletteDef d) async {
+    final titleCtl = TextEditingController(text: d.title);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('名前を変更'),
+        content: TextField(
+          controller: titleCtl,
+          maxLength: 30,
+          decoration: const InputDecoration(labelText: 'タイトル'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('保存')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    var newTitle = titleCtl.text.trim().isEmpty ? d.title : titleCtl.text.trim();
+
+    final list = await Store.loadSaved();
+    if (list.any((e) => e.id != d.id && e.title == newTitle)) {
+      int n = 2;
+      while (list.any((e) => e.id != d.id && e.title == '$newTitle$n')) n++;
+      newTitle = '$newTitle$n';
+    }
+
+    final i = list.indexWhere((e) => e.id == d.id);
+    if (i >= 0) {
+      list[i] = RouletteDef(
+        id: d.id,
+        title: newTitle,
+        items: d.items,
+        createdAt: d.createdAt,
+        updatedAt: DateTime.now().toIso8601String(),
+        lastUsedAt: d.lastUsedAt,
+        isPinned: d.isPinned,
+      );
+      await _saveAll(list);
+    }
+  }
+
+  Future<void> _confirmDelete(RouletteDef d) async {
+    final cs = Theme.of(context).colorScheme;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('削除しますか？'),
+        content: Text('「${d.title}」を削除します。元に戻せません。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade600, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('削除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final list = await Store.loadSaved();
+    list.removeWhere((e) => e.id == d.id);
+    await _saveAll(list);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('削除しました'),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+          backgroundColor: cs.surfaceTint.withOpacity(0.9),
+        ),
+      );
+    }
+  }
+
+  Widget _emptyState(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.inbox_outlined, size: 56, color: Colors.black26),
+          const SizedBox(height: 10),
+          const Text('まだ保存されたルーレットはありません', style: TextStyle(color: Colors.black54)),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const QuickInputPage()));
+            },
+            icon: const Icon(Icons.add),
+            label: const Text('新しく作る'),
+            style: FilledButton.styleFrom(
+              backgroundColor: cs.primary,
+              foregroundColor: cs.onPrimary,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        titleSpacing: 8,
+        title: Row(
+          children: [
+            Icon(Icons.save_alt_rounded, color: Theme.of(context).colorScheme.primary, size: 26),
+            const SizedBox(width: 8),
+            const Text(
+              '保存済みルーレット',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.black87, letterSpacing: 0.3),
+            ),
+          ],
+        ),
+      ),
+      body: _saved.isEmpty
+          ? _emptyState(context)
+          : ListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+        itemCount: _saved.length,
+        itemBuilder: (context, i) {
+          final d = _saved[i];
+          final preview = d.items.take(3).map((e) => e.name).join('、') + (d.items.length > 3 ? '…' : '');
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Material(
+              color: Colors.white,
+              elevation: 2,
+              borderRadius: BorderRadius.circular(16),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => QuickInputPage(initial: d))).then((_) => _load());
+                },
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(d.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.black87)),
+                            const SizedBox(height: 4),
+                            Text(
+                              preview,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13, color: Colors.black54),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: '名前変更',
+                            icon: Icon(Icons.edit_outlined, color: cs.primary.withOpacity(0.95)),
+                            onPressed: () => _rename(d),
+                          ),
+                          IconButton(
+                            tooltip: d.isPinned ? 'お気に入り解除' : 'お気に入り',
+                            icon: Icon(d.isPinned ? Icons.star : Icons.star_border, color: d.isPinned ? cs.primary : Colors.black45),
+                            onPressed: () => _togglePin(d),
+                          ),
+                          IconButton(
+                            tooltip: '削除',
+                            icon: Icon(Icons.delete_outline, color: Colors.red.shade700),
+                            onPressed: () => _confirmDelete(d),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ===== BLOCK 5: spin page =====
 class SpinPage extends StatefulWidget {
   final RouletteDef def;
   const SpinPage({super.key, required this.def});
   @override
   State<SpinPage> createState() => _SpinPageState();
-
 }
 
 class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
   late AnimationController wheelCtrl;
   late Animation<double> wheelAnim;
 
+  // TAP! アニメ
+  late AnimationController _tapCtrl;
+  late Animation<double> _tapScale;
+
+  // 結果オーバーレイ
+  late AnimationController _resultCtrl;
+  late Animation<double> _cardScale;
+  late Animation<double> _cardOpacity;
+  late Animation<Offset> _sheetOffset;
+
   final rand = Random();
-  bool _spinning = false;     // 回転中ガード
-  double _angle = 0.0;        // 現在角度
-  String? _resultName;        // 停止後のみセット & 表示
+  bool _spinning = false;
+  double _angle = 0.0;
+  String? _resultName;
 
-  static const _spinDuration = Duration(milliseconds: 5000); // ★5秒回す
-  static const _spinsCount = 15; // ★回転数（体感調整用）
+  static const _spinDuration = Duration(milliseconds: 5000);
+  static const _spinsCount = 15;
 
-  // --- 高速化：円盤を一度だけ画像に描いてキャッシュ ---
   ui.Image? _wheelImage;
   Size? _wheelImageSize;
   bool _buildingImage = false;
@@ -872,13 +922,23 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+
     wheelCtrl = AnimationController(vsync: this, duration: _spinDuration);
+
+    _tapCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+    _tapScale = Tween<double>(begin: 0.94, end: 1.08).animate(CurvedAnimation(parent: _tapCtrl, curve: Curves.easeInOutQuad));
+    _tapCtrl.repeat(reverse: true);
+
+    _resultCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 260));
+    _cardScale = Tween<double>(begin: 0.95, end: 1.0).animate(CurvedAnimation(parent: _resultCtrl, curve: Curves.easeOutBack));
+    _cardOpacity = CurvedAnimation(parent: _resultCtrl, curve: Curves.easeOutCubic);
+    _sheetOffset = Tween<Offset>(begin: const Offset(0, 0.25), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _resultCtrl, curve: Curves.easeOutCubic));
   }
 
   @override
   void didUpdateWidget(covariant SpinPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 編集して戻ってきたなど、項目が変わったら画像キャッシュ破棄
     if (oldWidget.def.items != widget.def.items) {
       _wheelImage?.dispose();
       _wheelImage = null;
@@ -889,12 +949,14 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
   @override
   void dispose() {
     wheelCtrl.dispose();
+    _tapCtrl.dispose();
+    _resultCtrl.dispose();
     _wheelImage?.dispose();
     super.dispose();
   }
 
   Future<void> _spin() async {
-    if (_spinning || _resultName != null) return; // 結果表示中は回せない
+    if (_spinning || _resultName != null) return;
     final items = widget.def.items;
     if (items.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("候補は2件以上必要です")));
@@ -903,80 +965,24 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
 
     setState(() {
       _spinning = true;
-      _resultName = null; // 前回結果を消す
+      _resultName = null;
     });
 
-    // 大きめ・丸め角・フル幅の共通ボタン
-    Widget _bigButtonSolid({
-      required BuildContext context,
-      required String label,
-      required IconData icon,
-      required VoidCallback? onPressed,
-      required Color bg,
-      required Color fg,
-    }) {
-      return SizedBox(
-        width: double.infinity,
-        height: 52,
-        child: FilledButton.icon(
-          onPressed: onPressed,
-          icon: Icon(icon),
-          label: Text(label),
-          style: FilledButton.styleFrom(
-            backgroundColor: bg,
-            foregroundColor: fg,
-            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-        ),
-      );
-    }
-
-    Widget _bigButtonTonal({
-      required BuildContext context,
-      required String label,
-      required IconData icon,
-      required VoidCallback? onPressed,
-      required Color bg,
-      required Color fg,
-    }) {
-      return SizedBox(
-        width: double.infinity,
-        height: 52,
-        child: FilledButton.tonal(
-          onPressed: onPressed,
-          style: FilledButton.styleFrom(
-            backgroundColor: bg,
-            foregroundColor: fg,
-            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon),
-              const SizedBox(width: 10),
-              Text(label),
-            ],
-          ),
-        ),
-      );
-    }
-
-
-    // --- 重み付き抽選で idx 決定 ---
     final weights = items.map((e) => e.weight).toList();
     final total = weights.reduce((a, b) => a + b);
     int r = rand.nextInt(total), acc = 0, idx = 0;
-    for (int i = 0; i < weights.length; i++) { acc += weights[i]; if (r < acc) { idx = i; break; } }
+    for (int i = 0; i < weights.length; i++) {
+      acc += weights[i];
+      if (r < acc) {
+        idx = i;
+        break;
+      }
+    }
 
-    // idx に対応する停止角（上ポインタ基準で中央に来る）
     final targetAngle = _targetAngleForIndex(idx);
-
     final begin = _angle;
     final end = begin + _spinsCount * 2 * pi + _normalizeDelta(begin, targetAngle);
 
-    // --- 5秒アニメーション（easeOut） ---
     wheelAnim = CurvedAnimation(parent: wheelCtrl, curve: Curves.easeOutCubic);
     wheelCtrl
       ..reset()
@@ -985,83 +991,73 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
           _angle = begin + (end - begin) * wheelAnim.value;
         });
       });
-    await wheelCtrl.forward(); // ★ 完全停止まで待つ
+    await wheelCtrl.forward();
 
-    // --- 停止と同時にだけ結果表示 ---
     setState(() {
-      _angle = end;                 // 念のため最終角度に固定
+      _angle = end;
       _spinning = false;
       _resultName = items[idx].name;
     });
+    _resultCtrl..reset()..forward();
 
     await _updateLastAndBumpSaved();
   }
 
-  // begin から target まで“正方向の最短差”に正規化
   double _normalizeDelta(double begin, double target) {
     double d = target - (begin % (2 * pi));
     while (d < 0) d += 2 * pi;
     return d;
   }
 
-  // 上のポインタに対して index セグメントの中心角を返す（上＝-π/2 位置）
   double _targetAngleForIndex(int index) {
     final items = widget.def.items;
     final sum = items.fold<int>(0, (s, e) => s + e.weight);
     double acc = 0;
-    for (int i = 0; i < index; i++) acc += items[i].weight / sum;
+    for (int i = 0; i < index; i++) {
+      acc += items[i].weight / sum;
+    }
     final w = items[index].weight / sum;
-    final center = acc + w / 2;          // 0..1 の中心位置
-    double a = -center * 2 * pi;         // 時計回りを正として上に合わせる
+    final center = acc + w / 2;
+    double a = -center * 2 * pi;
     while (a < 0) a += 2 * pi;
     return a;
   }
 
-  String _displayName(String s) =>
-      s.runes.length <= 12 ? s : String.fromCharCodes(s.runes.take(12)) + "…";
+  String _displayName(String s) => s.runes.length <= 12 ? s : String.fromCharCodes(s.runes.take(12)) + "…";
 
   Future<void> _updateLastAndBumpSaved() async {
     final now = DateTime.now().toIso8601String();
     final d = widget.def;
     final def = RouletteDef(
-      id: d.id, title: d.title, items: d.items,
-      createdAt: d.createdAt, updatedAt: now, lastUsedAt: now, isPinned: d.isPinned,
+      id: d.id,
+      title: d.title,
+      items: d.items,
+      createdAt: d.createdAt,
+      updatedAt: now,
+      lastUsedAt: now,
+      isPinned: d.isPinned,
     );
     await Store.saveLast(def);
     final saved = await Store.loadSaved();
     final i = saved.indexWhere((e) => e.id == d.id);
-    if (i >= 0) { saved[i] = def; await Store.saveSaved(saved); }
+    if (i >= 0) {
+      saved[i] = def;
+      await Store.saveSaved(saved);
+    }
   }
 
   void _resetForNext() {
+    _resultCtrl.reset();
     setState(() {
-      _resultName = null; // 結果を消して次のスピンを許可
+      _resultName = null;
     });
   }
 
-  // 保存時のデフォルト名（DefinePageと同等のロジック）
-  Future<String> _nextDefaultTitleForSave() async {
-    final saved = await Store.loadSaved();
-    final used = <int>{};
-    final re = RegExp(r'^ルーレット(\d+)$');
-    for (final d in saved) {
-      final m = re.firstMatch(d.title);
-      if (m != null) {
-        final n = int.tryParse(m.group(1) ?? '');
-        if (n != null) used.add(n);
-      }
-    }
-    int n = 1;
-    while (used.contains(n)) n++;
-    return "ルーレット$n";
-  }
-
-// スピン画面からの保存ダイアログ（保存後もこの画面に留まる）
+  // SpinPage 保存ダイアログ（保存後この画面に留まる）
   Future<void> _saveFromSpinWithDialog() async {
     if (widget.def.items.length < 2) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text("候補は2件以上必要です")));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("候補は2件以上必要です")));
       }
       return;
     }
@@ -1076,7 +1072,7 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
         title: const Text("ルーレットを保存"),
         content: TextField(
           controller: titleCtl,
-          maxLength: 100,
+          maxLength: 30,
           decoration: const InputDecoration(labelText: "タイトル（100文字まで）"),
         ),
         actions: [
@@ -1089,7 +1085,6 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
 
     var title = titleCtl.text.trim().isEmpty ? defaultTitle : titleCtl.text.trim();
 
-    // タイトル重複は末尾に数字を足して回避
     if (saved.any((e) => e.title == title)) {
       int n = 2;
       while (saved.any((e) => e.title == "$title$n")) n++;
@@ -1099,7 +1094,6 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     final now = DateTime.now().toIso8601String();
     final d = widget.def;
 
-    // 既に同IDが保存済みなら上書き（タイトルは新しいものに）
     final idx = saved.indexWhere((e) => e.id == d.id);
     final def = RouletteDef(
       id: d.id,
@@ -1120,15 +1114,11 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     await Store.saveLast(def);
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("保存しました")),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("保存しました")));
     }
   }
 
-
-  // 既存の保存済み一覧から「ルーレットN」の次番号を決める
-  Future<String> _nextDefaultTitle() async {
+  Future<String> _nextDefaultTitleForSave() async {
     final saved = await Store.loadSaved();
     final used = <int>{};
     final re = RegExp(r'^ルーレット(\d+)$');
@@ -1144,171 +1134,47 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     return "ルーレット$n";
   }
 
-// SpinPage から即保存（すでに保存済みなら updated/lastUsed を更新）
-  Future<void> _quickSave() async {
-    final now = DateTime.now().toIso8601String();
-    final d = widget.def;
-    final saved = await Store.loadSaved();
-    final idx = saved.indexWhere((e) => e.id == d.id);
-
-    if (idx >= 0) {
-      final updated = RouletteDef(
-        id: d.id,
-        title: saved[idx].title, // 既存タイトル維持
-        items: d.items,
-        createdAt: saved[idx].createdAt,
-        updatedAt: now,
-        lastUsedAt: now,
-        isPinned: saved[idx].isPinned,
-      );
-      saved[idx] = updated;
-      await Store.saveSaved(saved);
-      await Store.saveLast(updated);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("保存を更新しました")),
-        );
-      }
-      return;
-    }
-
-    final title = await _nextDefaultTitle();
-    final def = RouletteDef(
-      id: d.id,
-      title: title,
-      items: List<RouletteItem>.from(d.items),
-      createdAt: now,
-      updatedAt: now,
-      lastUsedAt: now,
-      isPinned: false,
-    );
-    saved.insert(0, def);
-    await Store.saveSaved(saved);
-    await Store.saveLast(def);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("保存しました")),
-      );
-    }
-  }
-
-
-  // 円周の「半径方向」に合わせて回転（文字の“下”が中心側＝内向き）
+  // ラジアル文字（SpinPage側で使用）
   void _paintRadialTextInward(
       Canvas canvas, {
         required Offset center,
         required String text,
-        required double midAngle,          // セグメント中央角（rad）
-        required double radiusForMaxWidth, // 行幅の上限見積り
+        required double midAngle,
+        required double radiusForMaxWidth,
         double fontSize = 14,
         Color fillColor = Colors.white,
         Color outlineColor = Colors.black,
         double outlineWidth = 2,
       }) {
-    // ラベルは「内向き（中心へ向けて下向き）」にしたいので
-    // キャンバスを “半径方向” に合わせて回す: rot = midAngle + π
-    // （通常のテキストは上が -Y ＝画面上なので、π 回転で下が中心側に来る）
-    double rot = midAngle + pi;
-
-    // テキストを描画
     final tp = TextPainter(
       text: TextSpan(
         text: text,
         style: TextStyle(
           fontSize: fontSize,
-          fontWeight: FontWeight.bold,
+          fontWeight: FontWeight.w700,
           color: fillColor,
-          shadows: [
-            Shadow(
-              offset: const Offset(0, 0),
-              blurRadius: 0,
-              color: outlineColor,
-            ),
-          ],
+          shadows: const [Shadow(offset: Offset(0, 1), blurRadius: 3, color: Colors.black26)],
         ),
       ),
       textAlign: TextAlign.center,
       textDirection: TextDirection.ltr,
+      maxLines: 2,
+      ellipsis: "…",
     )..layout(maxWidth: radiusForMaxWidth);
 
     canvas.save();
     canvas.translate(center.dx, center.dy);
-    canvas.rotate(rot);
     tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
     canvas.restore();
   }
 
-
-
-  // ---- 共通ボタンヘルパー ----
-  Widget _bigButtonSolid({
-    required BuildContext context,
-    required String label,
-    required IconData icon,
-    required VoidCallback? onPressed,
-    required Color bg,
-    required Color fg,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      height: 52,
-      child: FilledButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon),
-        label: Text(label),
-        style: FilledButton.styleFrom(
-          backgroundColor: bg,
-          foregroundColor: fg,
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        ),
-      ),
-    );
-  }
-
-  Widget _bigButtonTonal({
-    required BuildContext context,
-    required String label,
-    required IconData icon,
-    required VoidCallback? onPressed,
-    required Color bg,
-    required Color fg,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      height: 52,
-      child: FilledButton.tonal(
-        onPressed: onPressed,
-        style: FilledButton.styleFrom(
-          backgroundColor: bg,
-          foregroundColor: fg,
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon),
-            const SizedBox(width: 10),
-            Text(label),
-          ],
-        ),
-      ),
-    );
-  }
-
-
-  // ---------- ここから：BLOCK5内だけで完結する描画ユーティリティ ----------
+  // BLOCK5内ユーティリティ（フォールバック描画で使用）
   Color _shade(Color c, {double lightnessDelta = -0.08}) {
     final hsl = HSLColor.fromColor(c);
     final l = (hsl.lightness + lightnessDelta).clamp(0.0, 1.0);
     return hsl.withLightness(l).toColor();
   }
 
-  // アウトライン付きテキスト（中央座標指定・最大2行）
-// 互換性のため outlineColor / outlineWidth を残しつつ、未指定なら自動調整します。
-// 任意で bgColor を渡すと縁色の自動判定がより賢くなります。
   void _paintOutlinedText(
       Canvas canvas, {
         required Offset center,
@@ -1317,35 +1183,20 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
         Color fillColor = Colors.white,
         double maxWidth = 120,
         TextAlign align = TextAlign.center,
-
-        // 既存呼び出し互換
         Color? outlineColor,
         double? outlineWidth,
-
-        // 追加: 背景色（あれば縁色を自動決定に利用）
         Color? bgColor,
       }) {
-    // アウトライン幅：指定なければフォントサイズから算出（細字ほど細く）
     final ow = (outlineWidth ?? (fontSize / 7)).clamp(1.0, 2.2);
-
-    // 縁色：指定なければ背景の明暗から自動
     final oc = outlineColor ??
-        ((bgColor != null &&
-            ThemeData.estimateBrightnessForColor(bgColor) ==
-                Brightness.dark)
+        ((bgColor != null && ThemeData.estimateBrightnessForColor(bgColor) == Brightness.dark)
             ? Colors.white.withOpacity(0.85)
             : Colors.black.withOpacity(0.9));
 
-    // 本体（太すぎると潰れるので w600）
     final base = TextPainter(
       text: TextSpan(
         text: text,
-        style: TextStyle(
-          fontSize: fontSize,
-          height: 1.1,
-          fontWeight: FontWeight.w600,
-          color: fillColor,
-        ),
+        style: TextStyle(fontSize: fontSize, height: 1.1, fontWeight: FontWeight.w600, color: fillColor),
       ),
       textDirection: TextDirection.ltr,
       textAlign: align,
@@ -1353,16 +1204,10 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
       ellipsis: "…",
     )..layout(maxWidth: maxWidth);
 
-    // 縁（やや太め w800）
     final outline = TextPainter(
       text: TextSpan(
         text: text,
-        style: TextStyle(
-          fontSize: fontSize,
-          height: 1.1,
-          fontWeight: FontWeight.w800,
-          color: oc,
-        ),
+        style: TextStyle(fontSize: fontSize, height: 1.1, fontWeight: FontWeight.w800, color: oc),
       ),
       textDirection: TextDirection.ltr,
       textAlign: align,
@@ -1372,17 +1217,9 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
 
     final dx = -base.width / 2;
     final dy = -base.height / 2;
-
-    // 8方向オフセット（必要十分の4方向でもOKだが読みやすさ優先）
     final offsets = <Offset>[
-      Offset(-ow, 0),
-      Offset(ow, 0),
-      Offset(0, -ow),
-      Offset(0, ow),
-      Offset(-ow, -ow),
-      Offset(-ow, ow),
-      Offset(ow, -ow),
-      Offset(ow, ow),
+      Offset(-ow, 0), Offset(ow, 0), Offset(0, -ow), Offset(0, ow),
+      Offset(-ow, -ow), Offset(-ow, ow), Offset(ow, -ow), Offset(ow, ow),
     ];
     for (final o in offsets) {
       outline.paint(canvas, center + Offset(dx, dy) + o);
@@ -1390,16 +1227,15 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     base.paint(canvas, center + Offset(dx, dy));
   }
 
-
-  // ---------- ここまでユーティリティ ----------
-
-  // ================== 高速化：一度だけ画像に描画 ==================
+  // 画像キャッシュ生成
   Future<void> _ensureWheelImage(Size size) async {
     if (_buildingImage) return;
     if (_wheelImage != null &&
         _wheelImageSize != null &&
         (size.width - _wheelImageSize!.width).abs() < 1 &&
-        (size.height - _wheelImageSize!.height).abs() < 1) return;
+        (size.height - _wheelImageSize!.height).abs() < 1) {
+      return;
+    }
 
     _buildingImage = true;
     try {
@@ -1417,12 +1253,14 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
       final center = Offset(size.width / 2, size.height / 2);
       final rect = Rect.fromCircle(center: center, radius: r);
 
-      // うっすら外縁
-      final bg = Paint()..color = Colors.black.withOpacity(.04);
-      canvas.drawCircle(center, r, bg);
+      // 落ち影
+      final shadowPaint = Paint()
+        ..color = Colors.black.withOpacity(0.18)
+        ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, 18);
+      canvas.drawCircle(center + const Offset(0, 8), r * 0.94, shadowPaint);
 
       if (total > 0) {
-        double start = -pi / 2; // 上基準
+        double start = -pi / 2;
         final segPaint = Paint()..style = PaintingStyle.fill;
         final sepPaint = Paint()
           ..style = PaintingStyle.stroke
@@ -1432,46 +1270,35 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
         for (final it in items) {
           final sweep = (it.weight / total) * 2 * pi;
 
-          // --- セグメント塗り（放射グラデーションで外周を少し明るく）
           final base = Color(it.color);
           segPaint.shader = RadialGradient(
-            colors: [
-              _shade(base, lightnessDelta: -0.05), // 内側やや暗め
-              base,                                 // 中間
-              _shade(base, lightnessDelta: 0.06), // 外周ほんのり明るく
-            ],
+            colors: [_shade(base, lightnessDelta: -0.05), base, _shade(base, lightnessDelta: 0.06)],
             stops: const [0.0, 0.82, 1.0],
             center: Alignment.center,
             radius: 0.98,
           ).createShader(rect);
           canvas.drawArc(rect, start, sweep, true, segPaint);
-
-          // セパレーターの白細線
           canvas.drawArc(rect, start, sweep, true, sepPaint);
 
-          // --- ラベル（内向き）※セクターからはみ出さない
           final frac = it.weight / total;
           final fs = (12 + (frac * 24)).clamp(12, 20).toDouble();
           final mid = start + sweep / 2;
-          final labelR = r * 0.62;
+          final labelR = r * 0.72;
           final labelCenter = Offset(
             center.dx + cos(mid) * labelR,
             center.dy + sin(mid) * labelR,
           );
 
-// 1) このセグメントのパスを作成（中心→弧→中心）
           final segPath = Path()
             ..moveTo(center.dx, center.dy)
             ..arcTo(rect, start, sweep, false)
             ..close();
 
-// 2) ラベルが置かれる半径での弧の弦長（＝許容幅の上限）
           final chord = 2 * labelR * sin(sweep / 2);
-          final maxW = chord * 0.88; // ちょい内側に寄せる
+          final maxW = chord * 0.88;
 
           canvas.save();
-          canvas.clipPath(segPath);          // ← セクターでクリップ
-// 内向きに回転して中央に描画、幅は maxW までに制限（ellipsis は内部で）
+          canvas.clipPath(segPath);
           _paintRadialTextInward(
             canvas,
             center: labelCenter,
@@ -1485,20 +1312,41 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
           );
           canvas.restore();
 
-
-
-
           start += sweep;
         }
 
-        // ハブ
-        final hub = Paint()..color = Colors.white;
-        canvas.drawCircle(center, r * 0.12, hub);
-        final hubStroke = Paint()
-          ..color = Colors.black.withOpacity(.08)
+        // 外周リム
+        final rimPaint = Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0;
-        canvas.drawCircle(center, r * 0.12, hubStroke);
+          ..strokeWidth = 3
+          ..shader = SweepGradient(
+            startAngle: -pi / 2,
+            endAngle: 3 * pi / 2,
+            colors: [
+              Colors.white.withOpacity(0.7),
+              Colors.white.withOpacity(0.0),
+              Colors.black.withOpacity(0.12),
+              Colors.white.withOpacity(0.4),
+            ],
+          ).createShader(rect);
+        canvas.drawCircle(center, r - 1, rimPaint);
+
+        // 白ハブ
+        final hubR = r * 0.45;
+        final hubRect = Rect.fromCircle(center: center, radius: hubR);
+        final hubPaint = Paint()
+          ..shader = RadialGradient(
+            colors: [Colors.white, Colors.grey.shade200],
+            center: const Alignment(-0.15, -0.15),
+            radius: 1.0,
+          ).createShader(hubRect);
+        canvas.drawCircle(center, hubR, hubPaint);
+
+        final hubStroke = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..color = Colors.black.withOpacity(0.10);
+        canvas.drawCircle(center, hubR, hubStroke);
       }
 
       final picture = recorder.endRecording();
@@ -1523,19 +1371,14 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
     final items = widget.def.items;
     final sum = items.fold<int>(0, (s, e) => s + e.weight);
     final cs = Theme.of(context).colorScheme;
+
     return Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: true, // ← 戻る矢印だけ出す
-        title: const SizedBox.shrink(),  // ← タイトルは何も表示しない
-      ),
-
-
+      appBar: AppBar(automaticallyImplyLeading: true, title: const SizedBox.shrink()),
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: (_spinning || _resultName != null) ? null : _spin, // 結果表示中は無効
+        onTap: (_spinning || _resultName != null) ? null : _spin,
         child: Stack(
           children: [
-            // ---- 円盤本体（画像キャッシュで超軽量） ----
             Column(
               children: [
                 const SizedBox(height: 12),
@@ -1543,17 +1386,28 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
                   flex: 8,
                   child: LayoutBuilder(builder: (_, c) {
                     final sz = Size(c.maxWidth, c.maxHeight);
-                    _ensureWheelImage(sz); // 非同期生成。生成中はフォールバック。
+                    _ensureWheelImage(sz);
+
+                    final wheelRadius = sz.shortestSide * 0.44;
+                    final centerY = sz.height / 2;
+                    final wheelTop = centerY - wheelRadius;
+
+                    const pointerSize = 44.0;
+                    const gap = 4.0;
+
+                    double pointerTop = wheelTop - gap - pointerSize * 0.95;
+                    if (pointerTop < 0) pointerTop = 0;
+
+                    double tapTop = pointerTop - 32;
+                    if (tapTop < 0) tapTop = 0;
+
                     return Stack(
-                      alignment: Alignment.center,
                       children: [
-                        if (_wheelImage != null && _wheelImageSize != null)
-                          CustomPaint(
-                            size: sz,
-                            painter: _ImageWheelPainter(image: _wheelImage!, angle: _angle),
-                          )
-                        else
-                          CustomPaint(
+                        Align(
+                          alignment: Alignment.center,
+                          child: _wheelImage != null && _wheelImageSize != null
+                              ? CustomPaint(size: sz, painter: _ImageWheelPainter(image: _wheelImage!, angle: _angle))
+                              : CustomPaint(
                             size: sz,
                             painter: _WheelFallbackPainter(
                               items: items,
@@ -1563,12 +1417,34 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
                               paintOutlinedText: _paintOutlinedText,
                             ),
                           ),
-                        CustomPaint(size: sz, painter: _HubPainter()),
-                        Align(
-                          alignment: Alignment.topCenter,
-                          child: Transform.translate(
-                            offset: const Offset(0, 10),
-                            child: CustomPaint(size: const Size(30, 30), painter: _PointerPainterGlow()),
+                        ),
+                        if (!_spinning && _resultName == null)
+                          Positioned(
+                            top: tapTop,
+                            left: 0,
+                            right: 0,
+                            child: Center(
+                              child: ScaleTransition(
+                                scale: _tapScale,
+                                child: const Text(
+                                  'TAP!',
+                                  style: TextStyle(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFFFFD93D),
+                                    shadows: [Shadow(offset: Offset(0, 1), blurRadius: 3, color: Colors.black26)],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        Positioned(
+                          top: pointerTop,
+                          left: (sz.width - pointerSize) / 2,
+                          child: SizedBox(
+                            width: pointerSize,
+                            height: pointerSize,
+                            child: CustomPaint(painter: _PointerPainterGlow()),
                           ),
                         ),
                       ],
@@ -1576,111 +1452,154 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
                   }),
                 ),
                 const SizedBox(height: 16),
-                if (!_spinning && _resultName == null)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: Wrap(
-                      spacing: 12,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: _saveFromSpinWithDialog,        // ← 保存ダイアログを呼ぶ
-                          icon: const Icon(Icons.save_alt),
-                          label: const Text("保存する"),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Theme.of(context).colorScheme.primary,
-                            foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                          ),
-                        ),
-                        ElevatedButton.icon(
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
-                          ),
-                          icon: const Icon(Icons.edit),
-                          label: const Text("編集する"),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-                            foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
               ],
             ),
-
-
-            // ---- 結果オーバーレイ（停止後のみ）----
             if (_resultName != null)
               Positioned.fill(
-                child: Container(
-                  color: Colors.black.withOpacity(0.40),
-                  child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // 当選名（中央ドン）
-                          Text(
-                            _displayName(_resultName!),
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontSize: 56,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.white,
-                              letterSpacing: 0.3,
-                              shadows: [Shadow(offset: Offset(1, 2), blurRadius: 6, color: Colors.black87)],
-                            ),
-                          ),
-                          const SizedBox(height: 28),
-
-                          // 縦並びボタン：一番上だけ少し大きい
-                          ElevatedButton.icon(
-                            onPressed: _resetForNext,
-                            icon: const Icon(Icons.refresh, size: 26),
-                            label: const Text("もう一度回す"),
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size(260, 54),   // ← 少し大きめ
-                              backgroundColor: Theme.of(context).colorScheme.primary,
-                              foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                              textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-
-                          ElevatedButton.icon(
-                            onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
-                            icon: const Icon(Icons.list_alt),
-                            label: const Text("ルーレットを選ぶ"),
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size(240, 46),
-                              backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-                              foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-
-                          ElevatedButton.icon(
-                            onPressed: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => DefinePage(initial: widget.def)),
-                            ),
-                            icon: const Icon(Icons.edit),
-                            label: const Text("編集する"),
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size(240, 46),
-                              backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-                              foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
-                            ),
-                          ),
-                        ],
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: BackdropFilter(
+                        filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                        child: Container(color: Colors.black.withOpacity(0.28)),
                       ),
                     ),
-                  ),
+                    Center(
+                      child: FadeTransition(
+                        opacity: _cardOpacity,
+                        child: ScaleTransition(
+                          scale: _cardScale,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 32),
+                            padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 18, offset: Offset(0, 6))],
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('結果', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.primary)),
+                                const SizedBox(height: 6),
+                                Text(
+                                  _displayName(_resultName!),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontSize: 44,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.black87,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text('${_resultName!} が当たりました', textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Colors.black54)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.bottomCenter,
+                      child: SlideTransition(
+                        position: _sheetOffset,
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+                            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 18, offset: Offset(0, -4))],
+                          ),
+                          child: SafeArea(
+                            top: false,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 46,
+                                  height: 4,
+                                  margin: const EdgeInsets.only(bottom: 14),
+                                  decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(999)),
+                                ),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 52,
+                                  child: FilledButton.icon(
+                                    onPressed: _resetForNext,
+                                    icon: const Icon(Icons.refresh),
+                                    label: const Text('もう一度回す'),
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: cs.primary,
+                                      foregroundColor: cs.onPrimary,
+                                      textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 48,
+                                  child: FilledButton.tonalIcon(
+                                    onPressed: _saveFromSpinWithDialog,
+                                    icon: const Icon(Icons.save_alt),
+                                    label: const Text('このルーレットを保存する'),
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: cs.primaryContainer,
+                                      foregroundColor: cs.onPrimaryContainer,
+                                      textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 48,
+                                  child: FilledButton.tonalIcon(
+                                    onPressed: () {
+                                      Navigator.push(context, MaterialPageRoute(builder: (_) => QuickInputPage(initial: widget.def)));
+                                    },
+                                    icon: const Icon(Icons.edit_outlined),
+                                    label: const Text('このルーレットを編集する'),
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: cs.secondaryContainer,
+                                      foregroundColor: cs.onSecondaryContainer,
+                                      textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 48,
+                                  child: FilledButton.tonalIcon(
+                                    onPressed: () {
+                                      Navigator.of(context).popUntil((route) => route.isFirst);
+                                    },
+                                    icon: const Icon(Icons.home_outlined),
+                                    label: const Text('タイトルへ戻る'),
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: Colors.white,
+                                      foregroundColor: cs.primary,
+                                      textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
+                                        side: BorderSide(color: cs.primary.withOpacity(0.40), width: 1.2),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
           ],
@@ -1698,7 +1617,6 @@ class _ImageWheelPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final dpr = ui.window.devicePixelRatio;
     final src = Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
     final dst = Rect.fromLTWH(0, 0, size.width, size.height);
     final center = Offset(size.width / 2, size.height / 2);
@@ -1707,7 +1625,14 @@ class _ImageWheelPainter extends CustomPainter {
     canvas.translate(center.dx, center.dy);
     canvas.rotate(angle);
     canvas.translate(-center.dx, -center.dy);
-    canvas.drawImageRect(image, src, dst, Paint()..isAntiAlias = true..filterQuality = FilterQuality.medium);
+    canvas.drawImageRect(
+      image,
+      src,
+      dst,
+      Paint()
+        ..isAntiAlias = true
+        ..filterQuality = FilterQuality.medium,
+    );
     canvas.restore();
   }
 
@@ -1721,17 +1646,18 @@ class _WheelFallbackPainter extends CustomPainter {
   final int total;
   final double angle;
 
-  // SpinPage内のユーティリティを橋渡し（関数参照を受け取る）
   final Color Function(Color c, {double lightnessDelta}) shade;
-  final void Function(Canvas canvas,
-      {required Offset center,
+  final void Function(
+      Canvas canvas, {
+      required Offset center,
       required String text,
       double fontSize,
       Color fillColor,
       Color outlineColor,
       double outlineWidth,
       double maxWidth,
-      TextAlign align}) paintOutlinedText;
+      TextAlign align,
+      }) paintOutlinedText;
 
   _WheelFallbackPainter({
     required this.items,
@@ -1747,11 +1673,14 @@ class _WheelFallbackPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final rect = Rect.fromCircle(center: center, radius: r);
 
-    // 外縁のうっすら影
-    canvas.drawCircle(center, r, Paint()..color = Colors.black.withOpacity(.04));
+    final shadowPaint = Paint()
+      ..color = Colors.black.withOpacity(0.18)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18);
+    canvas.drawCircle(center + const Offset(0, 8), r * 0.94, shadowPaint);
+
     if (total <= 0) return;
 
-    double start = angle - pi / 2; // 上基準
+    double start = angle - pi / 2;
     final segPaint = Paint()..style = PaintingStyle.fill;
     final sepPaint = Paint()
       ..style = PaintingStyle.stroke
@@ -1763,11 +1692,7 @@ class _WheelFallbackPainter extends CustomPainter {
 
       final base = Color(it.color);
       segPaint.shader = RadialGradient(
-        colors: [
-          shade(base, lightnessDelta: -0.05),
-          base,
-          shade(base, lightnessDelta: 0.06),
-        ],
+        colors: [shade(base, lightnessDelta: -0.05), base, shade(base, lightnessDelta: 0.06)],
         stops: const [0.0, 0.82, 1.0],
         center: Alignment.center,
         radius: 0.98,
@@ -1775,34 +1700,24 @@ class _WheelFallbackPainter extends CustomPainter {
       canvas.drawArc(rect, start, sweep, true, segPaint);
       canvas.drawArc(rect, start, sweep, true, sepPaint);
 
-      // ラベル（フォールバックなので控えめサイズ）
       final frac = it.weight / total;
       final fs = (12 + (frac * 24)).clamp(12, 18).toDouble();
       final mid = start + sweep / 2;
-      final labelR = r * 0.62;
-      final labelCenter = Offset(
-        center.dx + cos(mid) * labelR,
-        center.dy + sin(mid) * labelR,
-      );
-      // 半径方向・内向きに回してから、(0,0) 中心に描画
-      canvas.save();
-      canvas.translate(labelCenter.dx, labelCenter.dy);
-      canvas.rotate(mid + pi); // ← 内向き
-      // セクターパス
+      final labelR = r * 0.72;
+      final labelCenter = Offset(center.dx + cos(mid) * labelR, center.dy + sin(mid) * labelR);
+
       final segPath = Path()
         ..moveTo(center.dx, center.dy)
         ..arcTo(rect, start, sweep, false)
         ..close();
 
-// ラベル半径での弦長を上限とする
       final chord = 2 * labelR * sin(sweep / 2);
       final maxW = chord * 0.88;
 
       canvas.save();
-      canvas.clipPath(segPath);           // ← はみ出し防止
+      canvas.clipPath(segPath);
       canvas.translate(labelCenter.dx, labelCenter.dy);
-      canvas.rotate(mid + pi);            // ← 内向き（中心側が“下”）
-
+      canvas.rotate(mid + pi);
       paintOutlinedText(
         canvas,
         center: Offset.zero,
@@ -1811,93 +1726,31 @@ class _WheelFallbackPainter extends CustomPainter {
         fillColor: Colors.white,
         outlineColor: Colors.black,
         outlineWidth: 2.0,
-        maxWidth: maxW,                   // ← 幅制限
+        maxWidth: maxW,
         align: TextAlign.center,
       );
       canvas.restore();
 
-
       start += sweep;
     }
 
-    // 中心ハブ（簡易）
-    final hub = Paint()..color = Colors.white;
-    canvas.drawCircle(center, r * 0.12, hub);
+    final hubR = r * 0.45;
+    final hubRect = Rect.fromCircle(center: center, radius: hubR);
+    final hubPaint = Paint()
+      ..shader = RadialGradient(colors: [Colors.white, Colors.grey.shade200], center: const Alignment(-0.15, -0.15), radius: 1.0)
+          .createShader(hubRect);
+    canvas.drawCircle(center, hubR, hubPaint);
+
+    final hubStroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..color = Colors.black.withOpacity(0.10);
+    canvas.drawCircle(center, hubR, hubStroke);
   }
 
   @override
   bool shouldRepaint(covariant _WheelFallbackPainter old) =>
       old.items != items || old.total != total || old.angle != angle;
-}
-
-
-
-// ===== BLOCK 6: painters =====
-class _WheelPainter extends CustomPainter {
-  final List<RouletteItem> items;
-  final int total;
-  final double angle;
-  _WheelPainter({required this.items, required this.total, required this.angle});
-
-  String _short(String s) => s.runes.length <= 10 ? s : String.fromCharCodes(s.runes.take(10)) + "……";
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final r = min(size.width, size.height) * 0.44;
-    final center = Offset(size.width / 2, size.height / 2);
-    final rect = Rect.fromCircle(center: center, radius: r);
-    canvas.drawCircle(center, r, Paint()..color = Colors.black.withOpacity(.04));
-    if (total <= 0) return;
-
-    double start = angle - pi / 2;
-    for (final e in items) {
-      final sweep = (e.weight / total) * 2 * pi;
-
-      final seg = Paint()
-        ..style = PaintingStyle.fill
-        ..shader = RadialGradient(
-          colors: [Color(e.color), Color(e.color).withOpacity(0.9)],
-          radius: 0.9,
-        ).createShader(rect);
-      canvas.drawArc(rect, start, sweep, true, seg);
-
-      final sep = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.3
-        ..color = Colors.white.withOpacity(0.85);
-      canvas.drawArc(rect, start, sweep, true, sep);
-
-      final mid = start + sweep / 2;
-      final labelR = r * 0.62;
-      final labelPos = Offset(center.dx + cos(mid) * labelR, center.dy + sin(mid) * labelR);
-
-      final tp = TextPainter(
-        text: TextSpan(text: _short(e.name), style: const TextStyle(color: Colors.black87, fontSize: 14, fontWeight: FontWeight.w600)),
-        textDirection: TextDirection.ltr,
-      )..layout(maxWidth: r * 0.9);
-
-      canvas.save();
-      canvas.translate(labelPos.dx, labelPos.dy);
-      canvas.rotate(mid + pi / 2);
-      tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
-      canvas.restore();
-
-      start += sweep;
-    }
-
-    canvas.drawCircle(center, r, Paint()..style = PaintingStyle.stroke..strokeWidth = 2..color = Colors.white.withOpacity(.95));
-
-    final sheen = Paint()
-      ..shader = SweepGradient(
-        startAngle: angle, endAngle: angle + pi / 3,
-        colors: [Colors.white.withOpacity(0), Colors.white.withOpacity(0.1), Colors.white.withOpacity(0)],
-      ).createShader(rect)
-      ..blendMode = BlendMode.plus;
-    canvas.drawCircle(center, r * .98, sheen);
-  }
-
-  @override
-  bool shouldRepaint(covariant _WheelPainter old) => old.items != items || old.total != total || old.angle != angle;
 }
 
 // ===== PATCH: pointer painter — tip points DOWN toward the wheel =====
@@ -1906,29 +1759,24 @@ class _PointerPainterGlow extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final w = size.width, h = size.height;
 
-    // 影(グロー)
     final glow = Paint()
       ..color = Colors.redAccent.withOpacity(0.28)
       ..style = PaintingStyle.fill
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
 
-    // 本体
     final fill = Paint()
       ..color = Colors.redAccent
       ..style = PaintingStyle.fill;
 
-    // 縁取り
     final stroke = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 
-    // ▼ 下向き三角形（アラインは Align.topCenter、キャンバス下側が円盤側）
-    // apex（先端）を下に、台側を上に配置
     final path = Path()
-      ..moveTo(w * 0.50, h * 0.95)  // 先端（下）
-      ..lineTo(w * 0.18, h * 0.20)  // 左上
-      ..lineTo(w * 0.82, h * 0.20)  // 右上
+      ..moveTo(w * 0.50, h * 0.95)
+      ..lineTo(w * 0.18, h * 0.20)
+      ..lineTo(w * 0.82, h * 0.20)
       ..close();
 
     canvas.drawPath(path, glow);
@@ -1938,117 +1786,4 @@ class _PointerPainterGlow extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-
-
-class _HubPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final r = min(size.width, size.height) * 0.44;
-    final c = Offset(size.width / 2, size.height / 2);
-    final r1 = r * 0.14, r2 = r * 0.10;
-    canvas.drawCircle(c, r1, Paint()..shader = RadialGradient(colors: [Colors.grey.shade300, Colors.grey.shade100]).createShader(Rect.fromCircle(center: c, radius: r1)));
-    canvas.drawCircle(c, r2, Paint()..shader = RadialGradient(colors: [Colors.white, Colors.grey.shade200]).createShader(Rect.fromCircle(center: c, radius: r2)));
-    final line = Paint()..color = Colors.white.withOpacity(0.8)..strokeWidth = 1.2;
-    canvas.drawLine(Offset(c.dx - r2, c.dy), Offset(c.dx + r2, c.dy), line);
-    canvas.drawLine(Offset(c.dx, c.dy - r2), Offset(c.dx, c.dy + r2), line);
-  }
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-// ===== 共通ボタンビルダー =====
-Widget _mainButton({
-  required BuildContext context,
-  required String label,
-  required IconData icon,
-  required VoidCallback onPressed,
-}) {
-  final cs = Theme.of(context).colorScheme;
-  return SizedBox(
-    width: double.infinity,
-    height: 56,
-    child: DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [cs.primary, cs.primaryContainer],
-        ),
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.25),
-            blurRadius: 6,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: ElevatedButton.icon(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.transparent,
-          shadowColor: Colors.transparent,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          textStyle: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        icon: Icon(icon, size: 24),
-        label: Text(label),
-        onPressed: onPressed,
-      ),
-    ),
-  );
-}
-
-Widget _subButton({
-  required BuildContext context,
-  required String label,
-  required IconData icon,
-  required VoidCallback onPressed,
-}) {
-  final cs = Theme.of(context).colorScheme;
-  return SizedBox(
-    width: double.infinity,
-    height: 52,
-    child: ElevatedButton.icon(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: cs.secondaryContainer,
-        foregroundColor: cs.onSecondaryContainer,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-        textStyle: const TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      icon: Icon(icon, size: 22),
-      label: Text(label),
-      onPressed: onPressed,
-    ),
-  );
-}
-
-
-// ===== BLOCK 7: particles (unused now, kept for future) =====
-class _Particle {
-  final Offset origin;
-  final double angle;   // rad
-  final double velocity; // px/s
-  final double life;    // sec
-  final MaterialColor color;
-  _Particle({required this.origin, required this.angle, required this.velocity, required this.life, required this.color});
-}
-
-class _ParticlePainter extends CustomPainter {
-  final List<_Particle> particles;
-  final double progress; // 0..1
-  _ParticlePainter({required this.particles, required this.progress});
-  @override
-  void paint(Canvas canvas, Size size) {}
-  @override
-  bool shouldRepaint(covariant _ParticlePainter old) => false;
 }
