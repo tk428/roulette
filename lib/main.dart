@@ -6,6 +6,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +16,11 @@ Future<void> main() async {
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
   ]);
+  if (defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS) {
+    await MobileAds.instance.initialize();
+  //  Interstitials.preload(); // （使わないなら消してOK）
+  }
 
   runApp(const RouletteApp());
 }
@@ -152,6 +159,137 @@ class Store {
   }
 }
 
+class _HomeWheel extends StatefulWidget {
+  final double idleSpeed;
+  final double maxSpeed;
+  final VoidCallback? onTap;
+  const _HomeWheel({
+    super.key,
+    required this.idleSpeed,
+    required this.maxSpeed,
+    this.onTap,
+  });
+
+  @override
+  State<_HomeWheel> createState() => _HomeWheelState();
+}
+
+class _HomeWheelState extends State<_HomeWheel> with TickerProviderStateMixin, WidgetsBindingObserver {
+  late final AnimationController _ticker;
+  double _angle = 0.0;
+  double _speed;
+
+  ui.Image? _image;
+  Size? _imgSize;
+  bool _building = false;
+
+  _HomeWheelState() : _speed = 0.01;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _speed = widget.idleSpeed;
+
+    // 画面全体を rebuild しないよう、ホイールだけを動かす ticker
+    _ticker = AnimationController.unbounded(vsync: this)
+      ..addListener(() {
+        // ここで setState するのは このウィジェットだけ
+        _angle += _speed;
+        if (_angle > pi * 2) _angle -= pi * 2;
+        _speed *= 0.97;
+        if (_speed < widget.idleSpeed) _speed = widget.idleSpeed;
+        setState(() {}); // ← 再描画範囲は _HomeWheel 内だけ
+      })
+      ..repeat(min: 0, max: 1, period: const Duration(milliseconds: 16)); // 約60fps
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _ticker.dispose();
+    _image?.dispose();
+    super.dispose();
+  }
+
+  // アプリが非表示の間は止める
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _ticker.stop();
+    } else if (state == AppLifecycleState.resumed) {
+      _ticker.repeat(min: 0, max: 1, period: const Duration(milliseconds: 16));
+    }
+  }
+
+  void _impulse() {
+    widget.onTap?.call();
+    _speed = (_speed + 0.25).clamp(widget.idleSpeed, widget.maxSpeed);
+  }
+
+  Future<void> _ensureImage(Size size) async {
+    if (_building) return;
+    if (_image != null && _imgSize != null &&
+        (size.width - _imgSize!.width).abs() < 1 &&
+        (size.height - _imgSize!.height).abs() < 1) return;
+
+    _building = true;
+    try {
+      // 端末負荷が高い時は縮小係数を上げて描画負荷をさらに下げられる
+      final dpr = ui.window.devicePixelRatio;
+      final scale = (dpr >= 3.0) ? 0.75 : 1.0; // ★ 高密度端末で少し落とす
+      final w = (size.width  * dpr * scale).clamp(128, 2048).toInt();
+      final h = (size.height * dpr * scale).clamp(128, 2048).toInt();
+
+      final rec = ui.PictureRecorder();
+      final c = Canvas(rec, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+      c.scale(dpr * scale, dpr * scale);
+
+      // ここは見た目そのまま：一度だけ描画（画像化）
+      final painter = _HomeWheelPainter(simplifyShadow: true); // ← 影を軽量化
+      painter.paint(c, size);
+
+      final pic = rec.endRecording();
+      final img = await pic.toImage(w, h);
+
+      _image?.dispose();
+      if (mounted) {
+        setState(() {
+          _image = img;
+          _imgSize = size;
+        });
+      } else {
+        img.dispose();
+      }
+    } finally {
+      _building = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _impulse,
+      child: LayoutBuilder(
+        builder: (_, c) {
+          final sz = Size(c.maxWidth, c.maxHeight);
+          _ensureImage(sz);
+
+          if (_image == null) {
+            // 画像生成中はフォールバック（1フレーム）
+            return CustomPaint(painter: _HomeWheelPainter(simplifyShadow: true));
+          }
+          return CustomPaint(
+            painter: _ImageWheelPainter(image: _image!, angle: _angle),
+          );
+        },
+      ),
+    );
+  }
+}
+
+
 // ===== BLOCK 3A: home screen (タイトル画面) =====
 class RootPage extends StatefulWidget {
   const RootPage({super.key});
@@ -265,21 +403,20 @@ class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
           child: Column(
             children: [
               const SizedBox(height: 8),
+              // 置き換え：タイトルのホイール
               Expanded(
                 child: Center(
                   child: AspectRatio(
                     aspectRatio: 1,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _onWheelTap,
-                      child: Transform.rotate(
-                        angle: _angle,
-                        child: CustomPaint(painter: _HomeWheelPainter()),
-                      ),
+                    child: _HomeWheel( // ← 新ウィジェット
+                      idleSpeed: 0.01,
+                      maxSpeed: 0.70,
+                      onTap: () {}, // タップ音を鳴らしたい等あればここで
                     ),
                   ),
                 ),
               ),
+
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
@@ -345,18 +482,25 @@ class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
 
 /// タイトル画面用のルーレット描画（セグメント＋中心の白丸）
 class _HomeWheelPainter extends CustomPainter {
+  final bool simplifyShadow;
+  _HomeWheelPainter({this.simplifyShadow = false});
+
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final r = size.shortestSide * 0.45;
     final rect = Rect.fromCircle(center: center, radius: r);
 
-    // 落ち影
-    final shadowPaint = Paint()
-      ..color = Colors.black.withOpacity(0.18)
-      ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, 18);
-    canvas.drawCircle(center + const Offset(0, 8), r * 0.94, shadowPaint);
-
+    // 落ち影（軽量化オプション）
+    if (simplifyShadow) {
+      final sp = Paint()..color = Colors.black12;
+      canvas.drawCircle(center + const Offset(0, 6), r * 0.94, sp);
+    } else {
+      final sp = Paint()
+        ..color = Colors.black.withOpacity(0.18)
+        ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 18);
+      canvas.drawCircle(center + const Offset(0, 8), r * 0.94, sp);
+    }
     // セグメント色
     final colors = <Color>[
       Colors.redAccent,
