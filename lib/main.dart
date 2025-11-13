@@ -223,7 +223,8 @@ class _HomeWheelState extends State<_HomeWheel> with TickerProviderStateMixin, W
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       _ticker.stop();
     } else if (state == AppLifecycleState.resumed) {
-      _ticker.repeat(min: 0, max: 1, period: const Duration(milliseconds: 16));
+      _ticker.repeat(min: 0, max: 1, period: const Duration(milliseconds: 22));
+
     }
   }
 
@@ -1770,7 +1771,7 @@ class _ImageWheelPainter extends CustomPainter {
       dst,
       Paint()
         ..isAntiAlias = true
-        ..filterQuality = FilterQuality.medium,
+        ..filterQuality = FilterQuality.low,
     );
     canvas.restore();
   }
