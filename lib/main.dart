@@ -8,6 +8,9 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform, kIsWeb;
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +23,12 @@ Future<void> main() async {
       defaultTargetPlatform == TargetPlatform.iOS) {
     await MobileAds.instance.initialize();
   //  Interstitials.preload(); // （使わないなら消してOK）
+  }
+  // 🔴 Web では広告SDKを触らない
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS)) {
+    await MobileAds.instance.initialize();
   }
 
   runApp(const RouletteApp());
