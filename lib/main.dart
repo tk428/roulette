@@ -302,25 +302,12 @@ class RootPage extends StatefulWidget {
   State<RootPage> createState() => _RootPageState();
 }
 
-class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
-  double _angle = 0.0;
-  double _speed = _idleSpeed;
-
-  static const double _idleSpeed = 0.01;  // 何もしてない時のゆっくり回転
-  static const double _maxSpeed  = 0.70;  // タップでここまで一気に加速
-
-  late final AnimationController _rotCtrl; // vsync 用のタイマー
+class _RootPageState extends State<RootPage> {
   RouletteDef? _last;
 
   @override
   void initState() {
     super.initState();
-    _rotCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 16),
-    )..addListener(_onTick)
-      ..repeat();
-
     _loadLast();
   }
 
@@ -332,42 +319,31 @@ class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
     });
   }
 
-  @override
-  void dispose() {
-    _rotCtrl..removeListener(_onTick)..dispose();
-    super.dispose();
-  }
-
-  void _onTick() {
-    setState(() {
-      _angle += _speed;
-      if (_angle > 2 * pi) _angle -= 2 * pi;
-      _speed *= 0.97;
-      if (_speed < _idleSpeed) _speed = _idleSpeed;
-    });
-  }
-
-  void _onWheelTap() {
-    setState(() {
-      const double impulse = 0.25;
-      _speed = (_speed + impulse).clamp(_idleSpeed, _maxSpeed);
-    });
-  }
-
   void _goCreate() {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const QuickInputPage()));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const QuickInputPage()),
+    );
   }
 
   void _goLast() {
     if (_last == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('前回のルーレットはまだありません')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('前回のルーレットはまだありません')),
+      );
       return;
     }
-    Navigator.push(context, MaterialPageRoute(builder: (_) => QuickInputPage(initial: _last!)));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => QuickInputPage(initial: _last!)),
+    );
   }
 
   void _goSaved() {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const SavedListPage()));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SavedListPage()),
+    );
   }
 
   @override
@@ -387,12 +363,18 @@ class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
             fontWeight: FontWeight.w900,
             letterSpacing: 1.2,
             height: 1.0,
-            shadows: [Shadow(offset: Offset(0, 2), blurRadius: 6, color: Colors.black26)],
+            shadows: [
+              Shadow(
+                offset: Offset(0, 2),
+                blurRadius: 6,
+                color: Colors.black26,
+              ),
+            ],
           ),
         ),
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 16, bottom: 0),
+            padding: const EdgeInsets.only(right: 16),
             child: IconButton(
               icon: const Icon(Icons.settings_outlined),
               iconSize: 30,
@@ -408,20 +390,18 @@ class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
           child: Column(
             children: [
               const SizedBox(height: 8),
-              // 置き換え：タイトルのホイール
               Expanded(
                 child: Center(
                   child: AspectRatio(
                     aspectRatio: 1,
-                    child: _HomeWheel( // ← 新ウィジェット
+                    child: _HomeWheel(
                       idleSpeed: 0.01,
                       maxSpeed: 0.70,
-                      onTap: () {}, // タップ音を鳴らしたい等あればここで
+                      onTap: () {}, // 音を鳴らすならここ
                     ),
                   ),
                 ),
               ),
-
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
@@ -433,8 +413,13 @@ class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
                     foregroundColor: cs.onPrimary,
                     elevation: 10,
                     shadowColor: Colors.black.withOpacity(0.30),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                    textStyle: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   child: const Text('ルーレットを作る'),
                 ),
@@ -452,7 +437,9 @@ class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
                         style: OutlinedButton.styleFrom(
                           backgroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                         ),
                         child: const Text('前回のルーレット'),
                       ),
@@ -469,7 +456,9 @@ class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
                         style: OutlinedButton.styleFrom(
                           backgroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                         ),
                         child: const Text('保存済みルーレット'),
                       ),
@@ -484,6 +473,7 @@ class _RootPageState extends State<RootPage> with TickerProviderStateMixin {
     );
   }
 }
+
 
 /// タイトル画面用のルーレット描画（セグメント＋中心の白丸）
 class _HomeWheelPainter extends CustomPainter {
