@@ -9,6 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:flutter/foundation.dart'
     show kIsWeb, defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform, kIsWeb;
+
 
 
 
@@ -385,6 +387,8 @@ class _RootPageState extends State<RootPage> {
           ),
         ],
       ),
+
+      // ← ここから body
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
@@ -398,7 +402,7 @@ class _RootPageState extends State<RootPage> {
                     child: _HomeWheel(
                       idleSpeed: 0.01,
                       maxSpeed: 0.70,
-                      onTap: () {}, // 音を鳴らすならここ
+                      onTap: () {},
                     ),
                   ),
                 ),
@@ -471,8 +475,14 @@ class _RootPageState extends State<RootPage> {
           ),
         ),
       ),
+
+      // ← ここが Scaffold の bottomNavigationBar
+      bottomNavigationBar: const BottomBanner(
+        padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+      ),
     );
   }
+
 }
 
 
@@ -743,6 +753,9 @@ class _QuickInputPageState extends State<QuickInputPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // ← 追加：バナー
+              const BottomBanner(padding: EdgeInsets.zero),
+              const SizedBox(height: 10),
               SizedBox(
                 height: 52,
                 width: double.infinity,
@@ -1744,6 +1757,8 @@ class _SpinPageState extends State<SpinPage> with TickerProviderStateMixin {
               ),
           ],
         ),
+
+
       ),
     );
   }
@@ -1926,4 +1941,128 @@ class _PointerPainterGlow extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+
+class AdIds {
+  static String get bannerTest {
+    if (kIsWeb) return ''; // webは未対応（空文字で無効化）
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'ca-app-pub-3940256099942544/6300978111';
+      case TargetPlatform.iOS:
+        return 'ca-app-pub-3940256099942544/2934735716';
+      default:
+        return 'ca-app-pub-3940256099942544/6300978111'; // デフォはAndroid
+    }
+  }
+
+  // 本番ID（ビルド前に差し替え）
+  static String get banner => bannerTest;
+}
+
+
+/// 画面下に固定するアンカード・アダプティブバナー
+class BottomBanner extends StatefulWidget {
+  /// 画面下端にベタ付けでいいならデフォルトのまま
+  final EdgeInsets padding;
+  const BottomBanner({super.key, this.padding = const EdgeInsets.fromLTRB(16, 0, 16, 8)});
+
+  @override
+  State<BottomBanner> createState() => _BottomBannerState();
+}
+
+class _BottomBannerState extends State<BottomBanner> with WidgetsBindingObserver {
+  BannerAd? _ad;
+  AdSize? _loadedSize;
+  Orientation? _lastOrientation;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 端末の向きが変わったらサイズを取り直す
+    final ori = MediaQuery.of(context).orientation;
+    if (_lastOrientation != ori) {
+      _lastOrientation = ori;
+      _load();
+    }
+  }
+
+  @override
+  void didChangeMetrics() {
+    // 画面幅が変わる（分割/キーボード/回転）時も安全に張り替え
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+
+    // 既存を破棄してサイズを取り直す
+    _ad?.dispose();
+    _ad = null;
+    _loadedSize = null;
+
+    // ▼ ここを変更：パディングを引いた幅でサイズを取得
+    final fullWidth = MediaQuery.of(context).size.width;
+    final usableWidth =
+    (fullWidth - widget.padding.horizontal).clamp(0, double.infinity);
+    final width = usableWidth.truncate();
+
+    if (width <= 0) return;
+
+    final size =
+    await AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(width);
+
+    if (!mounted || size == null) return;
+
+    final ad = BannerAd(
+      adUnitId: AdIds.banner,
+      size: size,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          if (!mounted) return;
+          setState(() {
+            _ad = ad as BannerAd;
+            _loadedSize = size;
+          });
+        },
+        onAdFailedToLoad: (ad, err) {
+          ad.dispose();
+        },
+      ),
+    );
+
+    await ad.load();
+  }
+
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _ad?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ad == null || _loadedSize == null) return const SizedBox.shrink();
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: widget.padding,
+        child: SizedBox(
+          width: _loadedSize!.width.toDouble(),
+          height: _loadedSize!.height.toDouble(),
+          child: AdWidget(ad: _ad!),
+        ),
+      ),
+    );
+  }
 }
