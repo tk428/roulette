@@ -657,46 +657,55 @@ class _RootPageState extends State<RootPage> {
 
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 90,
-        backgroundColor:
-        Theme.of(context).scaffoldBackgroundColor,
+        toolbarHeight: 120, // ← タイトルの上下余白UP
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'ルーレット',
-          style: TextStyle(
-            fontSize: 32,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 1.2,
-            height: 1.0,
-            shadows: [
-              Shadow(
-                offset: Offset(0, 2),
-                blurRadius: 6,
-                color: Colors.black26,
+
+        title: Column(
+          children: [
+            const SizedBox(height: 10), // ← タイトルを少し下げる調整
+            const Text(
+              'ルーレットをつくろう',
+              style: TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.2,
+                color: Colors.black87,
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'カスタムルーレットを自由に作れるアプリ',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.black54,
+              ),
+            ),
+          ],
         ),
+
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 16),
+            padding: const EdgeInsets.only(right: 16, top: 12),
+            // ↑ アイコンの位置を下げて、タイトルとの高さバランスを揃える
             child: IconButton(
               icon: const Icon(Icons.settings_outlined),
-              iconSize: 30,
-              tooltip: '設定',
+              iconSize: 28,
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const SettingsPage(),
-                  ),
+                  MaterialPageRoute(builder: (_) => const SettingsPage()),
                 );
               },
             ),
           ),
         ],
-      ), // ← ここから body
+      ),
+
+
+
+      // ← ここから body
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
@@ -2955,17 +2964,12 @@ class _SpinPageState extends State<SpinPage>
                   bottom: false,
                   child: Center(
                     child: BottomBanner(
-                      padding:
-                      const EdgeInsets.fromLTRB(
-                        16,
-                        0,
-                        16,
-                        0,
-                      ),
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
                     ),
                   ),
                 ),
               ),
+
           ],
         ),
       ),
@@ -3252,23 +3256,26 @@ class AdIds {
 
 /// 画面下に固定するアンカード・アダプティブバナー
 class BottomBanner extends StatefulWidget {
-  /// 画面下端にベタ付けでいいならデフォルトのまま
+  /// 画面端からの余白
   final EdgeInsets padding;
+
+  /// 上側のノッチ / ステータスバーを避けるか
+  final bool safeTop;
+
+  /// 下側のホームバーなどを避けるか
+  final bool safeBottom;
 
   const BottomBanner({
     super.key,
-    this.padding = const EdgeInsets.fromLTRB(
-      16,
-      0,
-      16,
-      8,
-    ),
+    this.padding = const EdgeInsets.fromLTRB(16, 0, 16, 8),
+    this.safeTop = false,   // デフォルトは「下に置く想定」なので false
+    this.safeBottom = true, // 下は避ける
   });
 
   @override
-  State<BottomBanner> createState() =>
-      _BottomBannerState();
+  State<BottomBanner> createState() => _BottomBannerState();
 }
+
 
 class _BottomBannerState extends State<BottomBanner>
     with WidgetsBindingObserver {
@@ -3360,15 +3367,21 @@ class _BottomBannerState extends State<BottomBanner>
     }
 
     return SafeArea(
-      top: false,
+      top: widget.safeTop,
+      bottom: widget.safeBottom,
       child: Padding(
         padding: widget.padding,
         child: SizedBox(
-          width: _loadedSize!.width.toDouble(),
+          width: double.infinity,
           height: _loadedSize!.height.toDouble(),
-          child: AdWidget(ad: _ad!),
+          child: Align(
+            alignment: Alignment.center,
+            child: AdWidget(ad: _ad!),
+          ),
         ),
       ),
     );
   }
+
+
 }
