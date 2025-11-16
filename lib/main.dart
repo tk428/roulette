@@ -2518,16 +2518,13 @@ class _SpinPageState extends State<SpinPage>
                             )
                                 : CustomPaint(
                               size: sz,
-                              painter:
-                              _WheelFallbackPainter(
+                              painter: _WheelFallbackPainter(
                                 items: items,
                                 total: sum,
                                 angle: _angle,
-                                shade: _shade,
-                                paintOutlinedText:
-                                _paintOutlinedText,
                               ),
                             ),
+
                           ),
                           if (!_spinning &&
                               _resultName == null)
@@ -3047,147 +3044,142 @@ class _WheelFallbackPainter extends CustomPainter {
   final List<RouletteItem> items;
   final int total;
   final double angle;
-  final Color Function(Color c, {double lightnessDelta})
-  shade;
-  final void Function(
-      Canvas canvas, {
-      required Offset center,
-      required String text,
-      double fontSize,
-      Color fillColor,
-      Color outlineColor,
-      double outlineWidth,
-      double maxWidth,
-      TextAlign align,
-      }) paintOutlinedText;
 
-  _WheelFallbackPainter({
+  const _WheelFallbackPainter({
     required this.items,
     required this.total,
     required this.angle,
-    required this.shade,
-    required this.paintOutlinedText,
   });
+
+  Color _shade(Color c, {double lightnessDelta = -0.08}) {
+    final hsl = HSLColor.fromColor(c);
+    final l = (hsl.lightness + lightnessDelta).clamp(0.0, 1.0);
+    return hsl.withLightness(l).toColor();
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
-    final r = (size.shortestSide * 0.44);
-    final center = Offset(
-      size.width / 2,
-      size.height / 2,
-    );
-    final rect = Rect.fromCircle(
-      center: center,
-      radius: r,
-    );
+    final r = size.shortestSide * 0.44;
+    final center = Offset(size.width / 2, size.height / 2);
+    final rect = Rect.fromCircle(center: center, radius: r);
 
+    // 影（SpinPage の画像版とほぼ同じ）
     final shadowPaint = Paint()
       ..color = Colors.black.withOpacity(0.18)
-      ..maskFilter = const MaskFilter.blur(
-        BlurStyle.normal,
+      ..maskFilter = const ui.MaskFilter.blur(
+        ui.BlurStyle.normal,
         18,
       );
-    canvas.drawCircle(
-      center + const Offset(0, 8),
-      r * 0.94,
-      shadowPaint,
-    );
+    canvas.drawCircle(center + const Offset(0, 8), r * 0.94, shadowPaint);
 
     if (total <= 0) return;
 
-    double start = angle - pi / 2;
-    final segPaint = Paint()
-      ..style = PaintingStyle.fill;
+    // ここで一度キャンバスごと回転させて、angle を反映
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(angle);
+    canvas.translate(-center.dx, -center.dy);
+
+    double start = -pi / 2;
+    final segPaint = Paint()..style = PaintingStyle.fill;
     final sepPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2
       ..color = Colors.white.withOpacity(0.85);
 
     for (final it in items) {
-      final sweep =
-          (it.weight / total) * 2 * pi;
+      final sweep = (it.weight / total) * 2 * pi;
       final base = Color(it.color);
 
+      // グラデーションも画像版と合わせる
       segPaint.shader = RadialGradient(
         colors: [
-          shade(
-            base,
-            lightnessDelta: -0.05,
-          ),
+          _shade(base, lightnessDelta: -0.05),
           base,
-          shade(
-            base,
-            lightnessDelta: 0.06,
-          ),
+          _shade(base, lightnessDelta: 0.06),
         ],
         stops: const [0.0, 0.82, 1.0],
         center: Alignment.center,
         radius: 0.98,
       ).createShader(rect);
 
-      canvas.drawArc(
-        rect,
-        start,
-        sweep,
-        true,
-        segPaint,
-      );
-      canvas.drawArc(
-        rect,
-        start,
-        sweep,
-        true,
-        sepPaint,
-      );
+      canvas.drawArc(rect, start, sweep, true, segPaint);
+      canvas.drawArc(rect, start, sweep, true, sepPaint);
 
+      // 文字も同じテイスト（白＋うっすら影）
       final frac = it.weight / total;
-      final fs =
-      (12 + (frac * 24)).clamp(12, 18).toDouble();
+      final fs = (12 + (frac * 24)).clamp(12, 20).toDouble();
       final mid = start + sweep / 2;
+
       final labelR = r * 0.72;
       final labelCenter = Offset(
         center.dx + cos(mid) * labelR,
         center.dy + sin(mid) * labelR,
       );
+      final chord = 2 * labelR * sin(sweep / 2);
+      final maxW = chord * 0.88;
+
+      final tp = TextPainter(
+        text: TextSpan(
+          text: it.name,
+          style: TextStyle(
+            fontSize: fs,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+            shadows: const [
+              Shadow(
+                offset: Offset(0, 1),
+                blurRadius: 3,
+                color: Colors.black26,
+              ),
+            ],
+          ),
+        ),
+        maxLines: 2,
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+        ellipsis: '…',
+      )..layout(maxWidth: maxW);
 
       final segPath = Path()
         ..moveTo(center.dx, center.dy)
         ..arcTo(rect, start, sweep, false)
         ..close();
 
-      final chord =
-          2 * labelR * sin(sweep / 2);
-      final maxW = chord * 0.88;
-
       canvas.save();
       canvas.clipPath(segPath);
-      canvas.translate(
-        labelCenter.dx,
-        labelCenter.dy,
-      );
-      canvas.rotate(mid + pi);
-
-      paintOutlinedText(
+      canvas.translate(labelCenter.dx, labelCenter.dy);
+      canvas.rotate(mid + pi); // 放射状に内向き
+      tp.paint(
         canvas,
-        center: Offset.zero,
-        text: it.name,
-        fontSize: fs,
-        fillColor: Colors.white,
-        outlineColor: Colors.black,
-        outlineWidth: 2.0,
-        maxWidth: maxW,
-        align: TextAlign.center,
+        Offset(-tp.width / 2, -tp.height / 2),
       );
       canvas.restore();
 
       start += sweep;
     }
 
+    canvas.restore(); // ← angle 回転の restore
+
+    // 外周リム
+    final rimPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..shader = SweepGradient(
+        startAngle: -pi / 2,
+        endAngle: 3 * pi / 2,
+        colors: [
+          Colors.white.withOpacity(0.7),
+          Colors.white.withOpacity(0.0),
+          Colors.black.withOpacity(0.12),
+          Colors.white.withOpacity(0.4),
+        ],
+      ).createShader(rect);
+    canvas.drawCircle(center, r - 1, rimPaint);
+
+    // 中央の白丸
     final hubR = r * 0.45;
-    final hubRect = Rect.fromCircle(
-      center: center,
-      radius: hubR,
-    );
+    final hubRect = Rect.fromCircle(center: center, radius: hubR);
     final hubPaint = Paint()
       ..shader = RadialGradient(
         colors: [
@@ -3208,10 +3200,9 @@ class _WheelFallbackPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _WheelFallbackPainter old) =>
-      old.items != items ||
-          old.total != total ||
-          old.angle != angle;
+      old.items != items || old.total != total || old.angle != angle;
 }
+
 
 // ===== PATCH: pointer painter — tip points DOWN toward the wheel =====
 class _PointerPainterGlow extends CustomPainter {
