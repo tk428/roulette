@@ -953,9 +953,14 @@ class QuickInputPage extends StatefulWidget {
 }
 
 class _QuickInputPageState extends State<QuickInputPage> {
+  // ★ 追加：最大項目数と乱数
+  static const int _maxItems = 30;
+  final Random _rand = Random();
+
   final List<TextEditingController> _nameCtls = [];
   final List<TextEditingController> _weightCtls = [];
   final List<int> _colors = [];
+
 
   @override
   void initState() {
@@ -988,6 +993,16 @@ class _QuickInputPageState extends State<QuickInputPage> {
     int weight = 1,
     int? color,
   }) {
+    // ★ ここで最大数チェック
+    if (_nameCtls.length >= _maxItems) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('項目は30個まで追加できます'),
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _nameCtls.add(
         TextEditingController(text: name),
@@ -995,15 +1010,45 @@ class _QuickInputPageState extends State<QuickInputPage> {
       _weightCtls.add(
         TextEditingController(text: weight.toString()),
       );
-      _colors.add(
-        color ??
-            Colors.primaries[_colors.length %
-                Colors.primaries.length]
-                .shade400
-                .value,
-      );
+
+      // ★ 色が指定されている（保存済み読み込みなど）ときはそのまま使う
+      if (color != null) {
+        _colors.add(color);
+        return;
+      }
+
+      // ★ 新しく作るとき用：明るめパレットからランダムに選ぶ
+      final palette = <Color>[
+        const Color(0xFFFF6B6B), // ちょい暗めレッド
+        const Color(0xFFFFA94D), // オレンジ
+        const Color(0xFFFFD93D), // 濃いめイエロー（ギリ白文字OK）
+        const Color(0xFF6BCB77), // グリーン
+        const Color(0xFF4D96FF), // ブルー（薄い水色より濃く）
+        const Color(0xFF9D4EDD), // パープル
+        const Color(0xFFE056FD), // ピンク寄りパープル
+        const Color(0xFFFB6F92), // ピンク
+        const Color(0xFFFF7B54), // 赤寄りオレンジ
+        const Color(0xFF2D9CDB), // さらに濃いブルー
+      ];
+
+
+
+
+
+      // すでに使っている色はできるだけ避ける
+      final used = _colors.toSet();
+      final available = palette
+          .where((c) => !used.contains(c.value))
+          .toList();
+
+      final picked = (available.isNotEmpty
+          ? available[_rand.nextInt(available.length)]
+          : palette[_rand.nextInt(palette.length)]);
+
+      _colors.add(picked.value);
     });
   }
+
 
   void _removeRow(int index) {
     if (_nameCtls.length <= 2) {
