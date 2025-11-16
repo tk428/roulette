@@ -600,13 +600,31 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
+// ▼ ランダム表示するサブ文言リスト（好きなだけ追加OK）
+const List<String> kSubMessages = [
+  "自由にルーレットをつくれるアプリ",
+  "迷った時はこれで決めよう",
+  "ぐるぐる回して楽しく決めよう",
+  "ぱっと作って、すぐ回せる",
+  "あなた好みのルーレットが作れる",
+  "今日の運勢も決めちゃおう？",
+  "飽きないカラフルルーレット",
+  "作るのも回すのもサクッと簡単",
+  "日常の些細な悩みに使えます",
+  "あらゆる選択をルーレットに",
+];
+
 
 class _RootPageState extends State<RootPage> {
   RouletteDef? _last;
 
+  late final String _subtitle;
+
   @override
   void initState() {
     super.initState();
+    // ▼ ランダムで1つ選ぶ
+    _subtitle = (List.of(kSubMessages)..shuffle()).first;
     _loadLast();
   }
 
@@ -676,8 +694,8 @@ class _RootPageState extends State<RootPage> {
             ),
             const SizedBox(height: 4),
             Text(
-              'カスタムルーレットを自由に作れるアプリ',
-              style: TextStyle(
+              _subtitle,
+              style: const TextStyle(
                 fontSize: 13,
                 color: Colors.black54,
               ),
@@ -1064,8 +1082,6 @@ class _QuickInputPageState extends State<QuickInputPage> {
 
     // 設定読み込み（クイック結果用）
     final settings = await Store.loadSettings();
-
-    await Store.saveLast(def); // プライベートモード中なら内部で何もしない
 
     if (!mounted) return;
 
