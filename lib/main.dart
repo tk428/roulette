@@ -2655,39 +2655,16 @@ class _SpinPageState extends State<SpinPage>
                         child: ScaleTransition(
                           scale: _cardScale,
                           child: Container(
-                            margin: const EdgeInsets
-                                .symmetric(
-                              horizontal: 32,
-                            ),
-                            padding:
-                            const EdgeInsets
-                                .fromLTRB(
-                              20,
-                              18,
-                              20,
-                              22,
-                            ),
-                            decoration:
-                            BoxDecoration(
+                            margin: const EdgeInsets.symmetric(horizontal: 32),
+                            padding: const EdgeInsets.fromLTRB(20, 14, 20, 18), // ★余白詰めた
+                            decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius:
-                              BorderRadius
-                                  .circular(
-                                20,
-                              ),
+                              borderRadius: BorderRadius.circular(20),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors
-                                      .black
-                                      .withOpacity(
-                                    0.18,
-                                  ),
+                                  color: Colors.black.withOpacity(0.18),
                                   blurRadius: 18,
-                                  offset:
-                                  const Offset(
-                                    0,
-                                    6,
-                                  ),
+                                  offset: const Offset(0, 6),
                                 ),
                               ],
                             ),
@@ -2795,25 +2772,8 @@ class _SpinPageState extends State<SpinPage>
                               mainAxisSize:
                               MainAxisSize.min,
                               children: [
-                                Container(
-                                  width: 46,
-                                  height: 4,
-                                  margin:
-                                  const EdgeInsets
-                                      .only(
-                                    bottom: 14,
-                                  ),
-                                  decoration:
-                                  BoxDecoration(
-                                    color:
-                                    Colors.black26,
-                                    borderRadius:
-                                    BorderRadius
-                                        .circular(
-                                      999,
-                                    ),
-                                  ),
-                                ),
+                                // ← この灰色バーを削除！
+                                SizedBox(height: 4), // ★必要ならちょい余白だけ残す
                                 SizedBox(
                                   width:
                                   double.infinity,
