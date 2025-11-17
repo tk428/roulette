@@ -1217,7 +1217,20 @@ class _QuickInputPageState extends State<QuickInputPage> {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('ルーレットを作る')),
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        centerTitle: true,
+        title: const Text(
+          'ルーレットを作る',
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            color: Colors.black87,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ),
       body: SafeArea(
         child: Padding(
           padding:
