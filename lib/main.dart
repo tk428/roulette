@@ -233,12 +233,46 @@ class Store {
   static const _kLast = "last_roulette";
   static const _kSaved = "saved_roulettes";
   static const _kSettings = "app_settings";
+  static const _kSeededDefault = "seeded_default_omikuji";
+
+  // デフォルトおみくじを投入済みか？
+  static Future<bool> hasSeededDefault() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_kSeededDefault) ?? false;
+  }
+
+  // デフォルトおみくじを投入済みフラグを立てる
+  static Future<void> setSeededDefault() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_kSeededDefault, true);
+  }
 
   // ===== 前回のルーレット =====
   static Future<Map<String, dynamic>?> loadLast() async {
     final p = await SharedPreferences.getInstance();
     final s = p.getString(_kLast);
     return s == null ? null : jsonDecode(s);
+  }
+
+  // ★ ここから：デフォルトの「今日の運勢」ルーレット
+  static RouletteDef defaultOmikuji() {
+    final now = DateTime.now().toIso8601String();
+    return RouletteDef(
+      id: 'default_omikuji',
+      title: '🍀 今日の運勢',
+      items: [
+        RouletteItem(name: '大吉', weight: 6, color: Colors.redAccent.value),
+        RouletteItem(name: '中吉', weight: 5, color: Colors.orangeAccent.value),
+        RouletteItem(name: '小吉', weight: 5, color: Colors.yellow.shade700.value),
+        RouletteItem(name: '吉',   weight: 8, color: Colors.lightGreen.shade600.value),
+        RouletteItem(name: '末吉', weight: 3, color: Colors.blueAccent.value),
+        RouletteItem(name: '凶',   weight: 1, color: Colors.grey.shade700.value),
+      ],
+      createdAt: now,
+      updatedAt: now,
+      lastUsedAt: null,
+      isPinned: true,
+    );
   }
 
   // ★ プライベートモード中は last を保存しない
@@ -1260,16 +1294,20 @@ class _QuickInputPageState extends State<QuickInputPage> {
       ),
       bottomNavigationBar: SafeArea(
         top: false,
-        child: Padding(
-          padding:
-          const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // ← 追加：バナー
-              const BottomBanner(padding: EdgeInsets.zero),
-              const SizedBox(height: 10),
-              SizedBox(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 🔻 広告（ここで左右16のパディングを指定）
+            const BottomBanner(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+            ),
+
+            const SizedBox(height: 10),
+
+            // 🔻 「項目を追加」ボタン（広告とは別に余白をつける）
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              child: SizedBox(
                 height: 52,
                 width: double.infinity,
                 child: FilledButton.tonalIcon(
@@ -1280,19 +1318,22 @@ class _QuickInputPageState extends State<QuickInputPage> {
                     textStyle: const TextStyle(
                       fontWeight: FontWeight.w700,
                     ),
-                    backgroundColor:
-                    cs.secondaryContainer,
-                    foregroundColor:
-                    cs.onSecondaryContainer,
+                    backgroundColor: cs.secondaryContainer,
+                    foregroundColor: cs.onSecondaryContainer,
                     shape: RoundedRectangleBorder(
-                      borderRadius:
-                      BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(height: 10),
-              SizedBox(
+            ),
+
+            const SizedBox(height: 10),
+
+            // 🔻 「ルーレットを回す」ボタン
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: SizedBox(
                 height: 72,
                 width: double.infinity,
                 child: FilledButton(
@@ -1301,8 +1342,7 @@ class _QuickInputPageState extends State<QuickInputPage> {
                     backgroundColor: cs.primary,
                     foregroundColor: cs.onPrimary,
                     shape: RoundedRectangleBorder(
-                      borderRadius:
-                      BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(20),
                     ),
                     textStyle: const TextStyle(
                       fontSize: 20,
@@ -1312,10 +1352,11 @@ class _QuickInputPageState extends State<QuickInputPage> {
                   child: const Text('ルーレットを回す'),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
+
     );
   }
 }
@@ -1340,16 +1381,27 @@ class _SavedListPageState extends State<SavedListPage> {
   }
 
   Future<void> _load() async {
-    final list = await Store.loadSaved();
+    final seeded = await Store.hasSeededDefault(); // ★ 追加
+    var list = await Store.loadSaved();
+
+    // ★ まだ seed してなくて、保存が0件のときだけ運勢ルーレットを入れる
+    if (!seeded && list.isEmpty) {
+      final def = Store.defaultOmikuji();  // ← ここを修正
+      list = [def];
+      await Store.saveSaved(list);
+      await Store.setSeededDefault();      // 二度と自動追加しない
+    }
+
     list.sort((a, b) {
-      final pin =
-          (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0);
+      final pin = (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0);
       if (pin != 0) return pin;
-      return (b.lastUsedAt ?? '')
-          .compareTo(a.lastUsedAt ?? '');
+      return (b.lastUsedAt ?? '').compareTo(a.lastUsedAt ?? '');
     });
+
     setState(() => _saved = list);
   }
+
+
 
   Future<void> _saveAll(List<RouletteDef> list) async {
     await Store.saveSaved(list);
@@ -1544,16 +1596,13 @@ class _SavedListPageState extends State<SavedListPage> {
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
-        backgroundColor:
-        Theme.of(context).scaffoldBackgroundColor,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         titleSpacing: 8,
         title: Row(
           children: [
             Icon(
               Icons.save_alt_rounded,
-              color: Theme.of(context)
-                  .colorScheme
-                  .primary,
+              color: Theme.of(context).colorScheme.primary,
               size: 26,
             ),
             const SizedBox(width: 8),
@@ -1569,87 +1618,62 @@ class _SavedListPageState extends State<SavedListPage> {
           ],
         ),
       ),
+
+      // ← ここがさっき貼ってくれた body
       body: _saved.isEmpty
           ? _emptyState(context)
           : ListView.builder(
-        padding: const EdgeInsets.fromLTRB(
-          12,
-          8,
-          12,
-          24,
-        ),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
         itemCount: _saved.length,
         itemBuilder: (context, i) {
           final d = _saved[i];
-          final preview =
-              d.items.take(3).map(
-                    (e) => e.name,
-              ).join('、') +
-                  (d.items.length > 3 ? '…' : '');
+          final preview = d.items
+              .take(3)
+              .map((e) => e.name)
+              .join('、') +
+              (d.items.length > 3 ? '…' : '');
 
           return Padding(
-            padding: const EdgeInsets.symmetric(
-              vertical: 6,
-            ),
+            padding: const EdgeInsets.symmetric(vertical: 6),
             child: Material(
               color: Colors.white,
               elevation: 2,
-              borderRadius:
-              BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(16),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
                 onTap: () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) =>
-                          QuickInputPage(initial: d),
+                      builder: (_) => QuickInputPage(initial: d),
                     ),
                   ).then((_) => _load());
                 },
                 child: Padding(
-                  padding:
-                  const EdgeInsets.fromLTRB(
-                    14,
-                    12,
-                    10,
-                    12,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
                   child: Row(
-                    crossAxisAlignment:
-                    CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         child: Column(
-                          crossAxisAlignment:
-                          CrossAxisAlignment
-                              .start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               d.title,
-                              style:
-                              const TextStyle(
+                              style: const TextStyle(
                                 fontSize: 16,
-                                fontWeight:
-                                FontWeight
-                                    .w700,
-                                color:
-                                Colors.black87,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.black87,
                               ),
                             ),
-                            const SizedBox(
-                              height: 4,
-                            ),
+                            const SizedBox(height: 4),
                             Text(
                               preview,
                               maxLines: 1,
-                              overflow: TextOverflow
-                                  .ellipsis,
-                              style:
-                              const TextStyle(
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
                                 fontSize: 13,
-                                color:
-                                Colors.black54,
+                                color: Colors.black54,
                               ),
                             ),
                           ],
@@ -1657,50 +1681,31 @@ class _SavedListPageState extends State<SavedListPage> {
                       ),
                       const SizedBox(width: 6),
                       Row(
-                        mainAxisSize:
-                        MainAxisSize.min,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(
                             tooltip: '名前変更',
                             icon: Icon(
-                              Icons
-                                  .edit_outlined,
-                              color: cs.primary
-                                  .withOpacity(
-                                0.95,
-                              ),
+                              Icons.edit_outlined,
+                              color: cs.primary.withOpacity(0.95),
                             ),
-                            onPressed: () =>
-                                _rename(d),
+                            onPressed: () => _rename(d),
                           ),
                           IconButton(
-                            tooltip: d.isPinned
-                                ? 'お気に入り解除'
-                                : 'お気に入り',
+                            tooltip: d.isPinned ? 'お気に入り解除' : 'お気に入り',
                             icon: Icon(
-                              d.isPinned
-                                  ? Icons.star
-                                  : Icons
-                                  .star_border,
-                              color: d.isPinned
-                                  ? cs.primary
-                                  : Colors
-                                  .black45,
+                              d.isPinned ? Icons.star : Icons.star_border,
+                              color: d.isPinned ? cs.primary : Colors.black45,
                             ),
-                            onPressed: () =>
-                                _togglePin(d),
+                            onPressed: () => _togglePin(d),
                           ),
                           IconButton(
                             tooltip: '削除',
                             icon: Icon(
-                              Icons
-                                  .delete_outline,
-                              color: Colors.red
-                                  .shade700,
+                              Icons.delete_outline,
+                              color: Colors.red.shade700,
                             ),
-                            onPressed: () =>
-                                _confirmDelete(
-                                    d),
+                            onPressed: () => _confirmDelete(d),
                           ),
                         ],
                       ),
@@ -1712,8 +1717,14 @@ class _SavedListPageState extends State<SavedListPage> {
           );
         },
       ),
+
+      // 🔻 ここを追加：保存済み画面用のバナー
+      bottomNavigationBar: const BottomBanner(
+        padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+      ),
     );
   }
+
 }
 
 // ===== BLOCK 5: spin page =====
@@ -2828,7 +2839,7 @@ class _SpinPageState extends State<SpinPage>
                                       Icons.save_alt,
                                     ),
                                     label: const Text(
-                                      'このルーレットを保存する',
+                                      'ルーレットを保存',
                                     ),
                                     style: FilledButton
                                         .styleFrom(
@@ -2880,7 +2891,7 @@ class _SpinPageState extends State<SpinPage>
                                           .edit_outlined,
                                     ),
                                     label: const Text(
-                                      'このルーレットを編集する',
+                                      'ルーレットを編集',
                                     ),
                                     style: FilledButton
                                         .styleFrom(
