@@ -1,20 +1,42 @@
 name: roulette_app
-description: Roulette MVP for web
-publish_to: "none"
+description: "ルーレットをつくろう"
+publish_to: 'none'
+
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.4.0 <4.0.0"
+  sdk: ^3.7.2
 
 dependencies:
   flutter:
     sdk: flutter
-  shared_preferences: ^2.3.2
-  google_mobile_ads: ^5.1.0
+  cupertino_icons: ^1.0.8
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  path_provider: ^2.1.0
+  google_mobile_ads: ^6.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.3.10
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icon.png
+    - assets/splash.png
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/icon.png
+  remove_alpha_ios: true
+
+flutter_native_splash:
+  color: "#FFFFFF"
+  image: assets/splash.png
+  android: true
+  ios: true
