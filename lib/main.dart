@@ -6,7 +6,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform, kIsWeb;
@@ -19,6 +20,10 @@ Future<void> main() async {
     DeviceOrientation.portraitUp,
   ]);
 
+  // ✅ Hive 初期化 & Box オープン
+  await Hive.initFlutter();
+  await Hive.openBox('roulette_box');
+
   // ✅ Web では広告SDKを一切触らない
   if (!kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
@@ -29,6 +34,7 @@ Future<void> main() async {
 
   runApp(const RouletteApp());
 }
+
 
 Color _shade(
     Color c, {
@@ -234,28 +240,42 @@ class Store {
   static const _kSaved = "saved_roulettes";
   static const _kSettings = "app_settings";
   static const _kSeededDefault = "seeded_default_omikuji";
-// ★ 追加：保存できるルーレットの最大数
+
+  // ★ 追加：Hive の Box 名
+  static const _boxName = 'roulette_box';
+
+  // ★ 保存できるルーレットの最大数（既存のまま）
   static const int kMaxSavedRoulettes = 10;
+
+  // 内部用ヘルパー：常に同じ Box を使う
+  static Box _box() {
+    return Hive.box(_boxName);
+  }
+
+  // ===== デフォルトおみくじ =====
+
   // デフォルトおみくじを投入済みか？
   static Future<bool> hasSeededDefault() async {
-    final p = await SharedPreferences.getInstance();
-    return p.getBool(_kSeededDefault) ?? false;
+    final box = _box();
+    return (box.get(_kSeededDefault, defaultValue: false) as bool);
   }
 
   // デフォルトおみくじを投入済みフラグを立てる
   static Future<void> setSeededDefault() async {
-    final p = await SharedPreferences.getInstance();
-    await p.setBool(_kSeededDefault, true);
+    final box = _box();
+    await box.put(_kSeededDefault, true);
   }
 
   // ===== 前回のルーレット =====
+
   static Future<Map<String, dynamic>?> loadLast() async {
-    final p = await SharedPreferences.getInstance();
-    final s = p.getString(_kLast);
-    return s == null ? null : jsonDecode(s);
+    final box = _box();
+    final s = box.get(_kLast) as String?;
+    if (s == null) return null;
+    return Map<String, dynamic>.from(jsonDecode(s));
   }
 
-  // ★ ここから：デフォルトの「今日の運勢」ルーレット
+  // ★ デフォルトの「今日の運勢」ルーレット
   static RouletteDef defaultOmikuji() {
     final now = DateTime.now().toIso8601String();
     return RouletteDef(
@@ -278,9 +298,9 @@ class Store {
 
   // ★ プライベートモード中は last を保存しない
   static Future<void> saveLast(RouletteDef def) async {
-    final p = await SharedPreferences.getInstance();
+    final box = _box();
 
-    final settingsStr = p.getString(_kSettings);
+    final settingsStr = box.get(_kSettings) as String?;
     if (settingsStr != null) {
       final st = AppSettings.fromJson(
         Map<String, dynamic>.from(jsonDecode(settingsStr)),
@@ -291,13 +311,14 @@ class Store {
       }
     }
 
-    await p.setString(_kLast, jsonEncode(def.toJson()));
+    await box.put(_kLast, jsonEncode(def.toJson()));
   }
 
   // ===== 保存済みルーレット =====
+
   static Future<List<RouletteDef>> loadSaved() async {
-    final p = await SharedPreferences.getInstance();
-    final list = p.getStringList(_kSaved) ?? [];
+    final box = _box();
+    final list = (box.get(_kSaved) as List?)?.cast<String>() ?? <String>[];
 
     return list
         .map(
@@ -309,17 +330,16 @@ class Store {
   }
 
   static Future<void> saveSaved(List<RouletteDef> defs) async {
-    final p = await SharedPreferences.getInstance();
-    await p.setStringList(
-      _kSaved,
-      defs.map((d) => jsonEncode(d.toJson())).toList(),
-    );
+    final box = _box();
+    final list = defs.map((d) => jsonEncode(d.toJson())).toList();
+    await box.put(_kSaved, list);
   }
 
   // ===== アプリ設定 =====
+
   static Future<AppSettings> loadSettings() async {
-    final p = await SharedPreferences.getInstance();
-    final s = p.getString(_kSettings);
+    final box = _box();
+    final s = box.get(_kSettings) as String?;
     if (s == null) return const AppSettings();
 
     return AppSettings.fromJson(
@@ -328,10 +348,11 @@ class Store {
   }
 
   static Future<void> saveSettings(AppSettings settings) async {
-    final p = await SharedPreferences.getInstance();
-    await p.setString(_kSettings, jsonEncode(settings.toJson()));
+    final box = _box();
+    await box.put(_kSettings, jsonEncode(settings.toJson()));
   }
 }
+
 
 // ===== BLOCK 2.5: home wheel widget =====
 
