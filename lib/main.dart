@@ -234,7 +234,8 @@ class Store {
   static const _kSaved = "saved_roulettes";
   static const _kSettings = "app_settings";
   static const _kSeededDefault = "seeded_default_omikuji";
-
+// ★ 追加：保存できるルーレットの最大数
+  static const int kMaxSavedRoulettes = 10;
   // デフォルトおみくじを投入済みか？
   static Future<bool> hasSeededDefault() async {
     final p = await SharedPreferences.getInstance();
@@ -2050,12 +2051,13 @@ class _SpinPageState extends State<SpinPage>
     }
   }
 
-  // SpinPage 保存ダイアログ（保存後この画面に留まる）
+  // SpinPage 内
+
   Future<void> _saveFromSpinWithDialog() async {
+    // 候補が少なすぎるときは保存させない
     if (widget.def.items.length < 2) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text("候補は2件以上必要です"),
           ),
@@ -2065,13 +2067,11 @@ class _SpinPageState extends State<SpinPage>
     }
 
     final saved = await Store.loadSaved();
-    final defaultTitle =
-    await _nextDefaultTitleForSave();
+    final defaultTitle = await _nextDefaultTitleForSave();
 
-    final titleCtl = TextEditingController(
-      text: defaultTitle,
-    );
+    final titleCtl = TextEditingController(text: defaultTitle);
 
+    // タイトル入力ダイアログ
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -2080,18 +2080,16 @@ class _SpinPageState extends State<SpinPage>
           controller: titleCtl,
           maxLength: 30,
           decoration: const InputDecoration(
-            labelText: "タイトル（100文字まで）",
+            labelText: "タイトル（30文字まで）",
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () =>
-                Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(context, false),
             child: const Text("キャンセル"),
           ),
           FilledButton(
-            onPressed: () =>
-                Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(context, true),
             child: const Text("保存"),
           ),
         ],
@@ -2104,11 +2102,10 @@ class _SpinPageState extends State<SpinPage>
         ? defaultTitle
         : titleCtl.text.trim();
 
+    // タイトル重複時は "◯◯2" "◯◯3" ... にずらす
     if (saved.any((e) => e.title == title)) {
       int n = 2;
-      while (saved.any(
-            (e) => e.title == "$title$n",
-      )) {
+      while (saved.any((e) => e.title == "$title$n")) {
         n++;
       }
       title = "$title$n";
@@ -2116,27 +2113,120 @@ class _SpinPageState extends State<SpinPage>
 
     final now = DateTime.now().toIso8601String();
     final d = widget.def;
-    final idx =
-    saved.indexWhere((e) => e.id == d.id);
 
+    // すでに同じIDがあるか（=上書き保存かどうか）
+    final idx = saved.indexWhere((e) => e.id == d.id);
+
+    // まず保存するオブジェクトを構築
     final def = RouletteDef(
       id: d.id,
       title: title,
       items: List<RouletteItem>.from(d.items),
-      createdAt:
-      idx >= 0 ? saved[idx].createdAt : now,
+      createdAt: idx >= 0 ? saved[idx].createdAt : now,
       updatedAt: now,
       lastUsedAt: now,
-      isPinned:
-      idx >= 0 ? saved[idx].isPinned : false,
+      isPinned: idx >= 0 ? saved[idx].isPinned : false,
     );
 
+    // ===== 1. 既存ルーレットの上書き保存の場合 =====
     if (idx >= 0) {
       saved[idx] = def;
     } else {
-      saved.insert(0, def);
+      // ===== 2. 新規保存の場合 =====
+
+      // 上限未満ならそのまま追加
+      if (saved.length < Store.kMaxSavedRoulettes) {
+        saved.insert(0, def);
+      } else {
+        // ここから「上限に達している」ケース
+
+        // お気に入り以外だけ対象にする
+        final candidates =
+        saved.where((e) => !e.isPinned).toList();
+
+        // 全部お気に入りだったら、自動上書きはやめて案内だけ出す
+        if (candidates.isEmpty) {
+          if (mounted) {
+            await showDialog<void>(
+              context: context,
+              builder: (_) => AlertDialog(
+                title: const Text('保存上限に達しました'),
+                content: Text(
+                  '保存できるルーレットは最大 '
+                      '${Store.kMaxSavedRoulettes} 個です。\n\n'
+                      '現在保存されているルーレットはすべて「お気に入り」に設定されています。\n'
+                      '新しく保存するには、お気に入りを外すか、どれかを削除してください。',
+                ),
+                actions: [
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('OK'),
+                  ),
+                ],
+              ),
+            );
+          }
+          return;
+        }
+
+        // lastUsedAt が一番古い（または null ）ものを探す
+        DateTime _parseTime(String? s) {
+          if (s == null || s.isEmpty) {
+            return DateTime.fromMillisecondsSinceEpoch(0);
+          }
+          return DateTime.tryParse(s) ??
+              DateTime.fromMillisecondsSinceEpoch(0);
+        }
+
+        RouletteDef oldest = candidates.first;
+        for (final r in candidates.skip(1)) {
+          if (_parseTime(r.lastUsedAt)
+              .isBefore(_parseTime(oldest.lastUsedAt))) {
+            oldest = r;
+          }
+        }
+
+        // 確認ダイアログ
+        final overwrite = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('保存上限に達しました'),
+            content: Text(
+              '保存できるルーレットは最大 '
+                  '${Store.kMaxSavedRoulettes} 個です。\n\n'
+                  '最近使用していない「${oldest.title}」を\n'
+                  '上書きして保存しますか？',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('キャンセル'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('上書き保存'),
+              ),
+            ],
+          ),
+        );
+
+        if (overwrite != true) return;
+
+        // 実際に oldest を置き換える
+        final replaceIndex =
+        saved.indexWhere((e) => e.id == oldest.id);
+        if (replaceIndex >= 0) {
+          saved[replaceIndex] = def;
+        } else {
+          // 念のためのフォールバック
+          saved
+            ..add(def)
+            ..removeAt(0);
+        }
+      }
     }
 
+    // 保存一覧と「前回のルーレット」を更新
     await Store.saveSaved(saved);
     await Store.saveLast(def);
 
@@ -2146,6 +2236,8 @@ class _SpinPageState extends State<SpinPage>
       );
     }
   }
+
+
 
   Future<String> _nextDefaultTitleForSave() async {
     final saved = await Store.loadSaved();
@@ -2673,14 +2765,15 @@ class _SpinPageState extends State<SpinPage>
                         ),
                       ),
                     ),
-                    Center(
+                    Align(
+                      alignment: const Alignment(0, -0.12), // ★ カード全体を少しだけ上に
                       child: FadeTransition(
                         opacity: _cardOpacity,
                         child: ScaleTransition(
                           scale: _cardScale,
                           child: Container(
                             margin: const EdgeInsets.symmetric(horizontal: 32),
-                            padding: const EdgeInsets.fromLTRB(20, 14, 20, 18), // ★余白詰めた
+                            padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(20),
@@ -2693,55 +2786,34 @@ class _SpinPageState extends State<SpinPage>
                               ],
                             ),
                             child: Column(
-                              mainAxisSize:
-                              MainAxisSize.min,
+                              mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
                                   '結果',
                                   style: TextStyle(
                                     fontSize: 13,
-                                    fontWeight:
-                                    FontWeight
-                                        .w600,
-                                    color:
-                                    cs.primary,
+                                    fontWeight: FontWeight.w600,
+                                    color: cs.primary,
                                   ),
                                 ),
-                                const SizedBox(
-                                  height: 6,
-                                ),
+                                const SizedBox(height: 6),
                                 Text(
-                                  _displayName(
-                                    _resultName!,
-                                  ),
-                                  textAlign:
-                                  TextAlign
-                                      .center,
-                                  style:
-                                  const TextStyle(
+                                  _displayName(_resultName!),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
                                     fontSize: 44,
-                                    fontWeight:
-                                    FontWeight
-                                        .w800,
-                                    color: Colors
-                                        .black87,
-                                    letterSpacing:
-                                    0.3,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.black87,
+                                    letterSpacing: 0.3,
                                   ),
                                 ),
-                                const SizedBox(
-                                  height: 8,
-                                ),
+                                const SizedBox(height: 8),
                                 Text(
                                   '${_resultName!} が当たりました',
-                                  textAlign:
-                                  TextAlign
-                                      .center,
-                                  style:
-                                  const TextStyle(
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
                                     fontSize: 14,
-                                    color: Colors
-                                        .black54,
+                                    color: Colors.black54,
                                   ),
                                 ),
                               ],
@@ -2750,6 +2822,7 @@ class _SpinPageState extends State<SpinPage>
                         ),
                       ),
                     ),
+
                     Align(
                       alignment: Alignment.bottomCenter,
                       child: SlideTransition(
